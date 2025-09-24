@@ -17,6 +17,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:Inter,ui-sans-ser
 .btn-primary{background:var(--green)}
 .btn-danger{background:var(--red)}
 .btn-muted{background:#334155;color:#cbd5e1}
+.btn.btn-muted{box-shadow:none}
 .row{display:flex;gap:12px;align-items:center}
 .pos-pill{padding:4px 10px;border-radius:999px;font-size:12px;border:1px solid #1f2937}
 .pos-noun{background:rgba(59,130,246,.15);color:#93c5fd}

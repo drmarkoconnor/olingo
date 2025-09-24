@@ -1,4 +1,6 @@
 import { Word } from '@/storage/db';
+import { useSettings } from '@/store/useSettings';
+import { speak, canTTS } from '@/lib/tts';
 
 type Props = {
   card: { word: Word } & Record<string, any>;
@@ -17,6 +19,7 @@ function posClass(pos?: string){
 
 export default function Flashcard({ card, flipped, onFlip }: Props){
   const { word } = card;
+  const { tts } = useSettings();
   return (
     <div className="card" onClick={!flipped ? onFlip : undefined} style={{ cursor: 'pointer' }}>
       <div style={{display:'flex',flexDirection:'column',gap:12, alignItems:'center'}}>
@@ -27,6 +30,13 @@ export default function Flashcard({ card, flipped, onFlip }: Props){
           <div>
             <h3 className="translation">{word.english}</h3>
             {word.category && <div style={{marginTop:8, color:'#94a3b8'}}>Category: {word.category}</div>}
+            {tts && canTTS() && (
+              <div style={{marginTop:12}}>
+                <button className="btn btn-muted" onClick={(e)=>{ e.stopPropagation(); speak(word.italian, 'it-IT'); }}>
+                  ▶️ Hear it
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

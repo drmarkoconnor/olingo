@@ -3,18 +3,24 @@ import Flashcard from '@/ui/Flashcard';
 import { useStudyQueue } from '@/store/useStudyQueue';
 import { scheduleReview } from '@/srs/scheduler';
 import { useDB } from '@/store/useDB';
+import { useAuth } from '@/store/useAuth';
 
 export default function Study() {
   const { dueQueue, loadQueue, markResult } = useStudyQueue();
   const { ready } = useDB();
   const [flipped, setFlipped] = useState(false);
 
+  const { userId } = useAuth();
   useEffect(() => {
-    if (ready) {
+    if (ready && userId) {
       // Ensure per-word user card state exists, then load the due queue
-      useDB.getState().ensureUserCardsForAllWords('local-user').then(loadQueue);
+      useDB.getState().ensureUserCardsForAllWords(userId).then(() => {
+        // update queue store's userId before loading
+        useStudyQueue.setState({ userId });
+        loadQueue();
+      });
     }
-  }, [ready, loadQueue]);
+  }, [ready, loadQueue, userId]);
 
   const current = useMemo(() => dueQueue[0], [dueQueue]);
 
