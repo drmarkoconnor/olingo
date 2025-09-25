@@ -1,6 +1,7 @@
 # Olingo — Italian Vocabulary Flashcards (PWA)
 
-A mobile-first React + TypeScript Progressive Web App to learn Italian vocabulary with spaced repetition, offline support, and CSV import.
+A mobile-first React + TypeScript Progressive Web App to learn Italian
+vocabulary with spaced repetition, offline support, and CSV import.
 
 ## Features
 
@@ -13,13 +14,13 @@ A mobile-first React + TypeScript Progressive Web App to learn Italian vocabular
 
 ## Getting started
 
-1) Install deps
+1. Install deps
 
 ```sh
 npm install
 ```
 
-2) Run the app (dev)
+2. Run the app (dev)
 
 ```sh
 npm run dev
@@ -27,9 +28,10 @@ npm run dev
 
 Open the link printed (usually http://localhost:5173).
 
-3) Import your CSV
+3. Import your CSV
 
-- Navigate to Import (via Settings or `/import`) and upload a CSV with headers: `italian,english,pos,category`.
+- Navigate to Import (via Settings or `/import`) and upload a CSV with headers:
+  `italian,english,pos,category`.
 - Example:
 
 ```
@@ -39,7 +41,7 @@ mangiare,to eat,verb,Kitchen
 rosso,red,adj,Colors
 ```
 
-4) Study
+4. Study
 
 - Tap a card to reveal answer. Mark Correct/Wrong to schedule next review.
 - Due queue is capped to 20 per session for now.
@@ -49,7 +51,8 @@ rosso,red,adj,Colors
 - Create a new Supabase project.
 - Run the SQL in `supabase/schema.sql`.
 - Create anon and service role keys; add them to `.env` (see `.env.example`).
-- Later, you can wire sync by using `@supabase/supabase-js` to mirror `words`, `user_cards`, and `review_logs`.
+- Later, you can wire sync by using `@supabase/supabase-js` to mirror `words`,
+  `user_cards`, and `review_logs`.
 
 ## Testing
 
