@@ -72,10 +72,17 @@ async function readFeed(feed: (typeof feeds)[number]) {
 }
 
 async function readYouTube() {
-	const apiKey = getEnv('YOUTUBE_API_KEY')
-	if (!apiKey) return []
+	const apiKey = getEnv('YOUTUBE_API_KEY')?.trim()
+	if (!apiKey) {
+		return {
+			items: [],
+			status: 'not_configured',
+			configured: false,
+			error: null,
+		}
+	}
 
-	const query = getEnv('YOUTUBE_SEARCH_QUERY') || 'italiano cultura Milano'
+	const query = getEnv('YOUTUBE_SEARCH_QUERY')?.trim() || 'italiano cultura Milano'
 	const params = new URLSearchParams({
 		part: 'snippet',
 		type: 'video',
@@ -90,7 +97,25 @@ async function readYouTube() {
 	const response = await fetch(
 		`https://www.googleapis.com/youtube/v3/search?${params.toString()}`
 	)
-	if (!response.ok) return []
+	if (!response.ok) {
+		let error = `${response.status} ${response.statusText}`
+		try {
+			const body = (await response.json()) as {
+				error?: {
+					message?: string
+					errors?: Array<{ reason?: string }>
+				}
+			}
+			const reason = body.error?.errors?.[0]?.reason
+			error = [reason, body.error?.message].filter(Boolean).join(': ') || error
+		} catch {}
+		return {
+			items: [],
+			status: `error_${response.status}`,
+			configured: true,
+			error,
+		}
+	}
 
 	const data = (await response.json()) as {
 		items?: Array<{
@@ -103,7 +128,7 @@ async function readYouTube() {
 		}>
 	}
 
-	return (
+	const items =
 		data.items
 			?.map((item) => {
 				const videoId = item.id?.videoId
@@ -122,13 +147,34 @@ async function readYouTube() {
 				}
 			})
 			.filter((item): item is NonNullable<typeof item> => Boolean(item)) ?? []
-	)
+
+	return {
+		items,
+		status: 'ok',
+		configured: true,
+		error: null,
+	}
 }
 
 export default async () => {
-	const results = await Promise.all([...feeds.map(readFeed), readYouTube()])
+	const [youtube, ...feedResults] = await Promise.all([
+		readYouTube(),
+		...feeds.map(readFeed),
+	])
+	const rssItems = feedResults.flat()
 	return Response.json({
-		items: results.flat().slice(0, 8),
+		items: [...youtube.items, ...rssItems].slice(0, 8),
+		diagnostics: {
+			youtube: {
+				configured: youtube.configured,
+				status: youtube.status,
+				count: youtube.items.length,
+				error: youtube.error,
+			},
+			rss: {
+				count: rssItems.length,
+			},
+		},
 		fetchedAt: new Date().toISOString(),
 	})
 }
