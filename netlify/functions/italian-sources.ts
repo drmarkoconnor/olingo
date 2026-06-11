@@ -72,13 +72,22 @@ async function readFeed(feed: (typeof feeds)[number]) {
 }
 
 async function readYouTube() {
-	const apiKey = getEnv('YOUTUBE_API_KEY')?.trim()
+	const rawApiKey = getEnv('YOUTUBE_API_KEY') || ''
+	const keyShape = {
+		present: rawApiKey.length > 0,
+		length: rawApiKey.length,
+		trimmedLength: rawApiKey.trim().length,
+		startsWithAIza: rawApiKey.trim().startsWith('AIza'),
+		hasWhitespace: /\s/.test(rawApiKey),
+	}
+	const apiKey = rawApiKey.trim()
 	if (!apiKey) {
 		return {
 			items: [],
 			status: 'not_configured',
 			configured: false,
 			error: null,
+			keyShape,
 		}
 	}
 
@@ -114,6 +123,7 @@ async function readYouTube() {
 			status: `error_${response.status}`,
 			configured: true,
 			error,
+			keyShape,
 		}
 	}
 
@@ -153,6 +163,7 @@ async function readYouTube() {
 		status: 'ok',
 		configured: true,
 		error: null,
+		keyShape,
 	}
 }
 
@@ -170,6 +181,7 @@ export default async () => {
 				status: youtube.status,
 				count: youtube.items.length,
 				error: youtube.error,
+				keyShape: youtube.keyShape,
 			},
 			rss: {
 				count: rssItems.length,
