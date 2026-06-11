@@ -40,6 +40,19 @@ function decodeXml(value: string) {
 		.trim()
 }
 
+function stripHtml(value: string) {
+	return decodeXml(value)
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+}
+
+function summarize(value: string, fallback: string) {
+	const summary = stripHtml(value)
+	if (!summary) return fallback
+	return summary.length > 180 ? `${summary.slice(0, 177).trim()}...` : summary
+}
+
 function pick(block: string, tag: string) {
 	const match = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
 	return match ? decodeXml(match[1]) : ''
@@ -58,12 +71,17 @@ async function readFeed(feed: (typeof feeds)[number]) {
 		?.slice(0, 4)
 		.map((block, index) => {
 			const title = pick(block, 'title')
+			const summary = summarize(
+				pick(block, 'description'),
+				'Una notizia di oggi da trasformare in una domanda semplice in italiano.'
+			)
 			return {
 				id: `${feed.sourceName}-${index}-${title}`.replace(/\W+/g, '-'),
 				sourceName: feed.sourceName,
 				title,
 				link: pick(block, 'link'),
 				topic: feed.topic,
+				summary,
 				publishedAt: pick(block, 'pubDate'),
 				prompt: makePrompt(title),
 			}
@@ -95,7 +113,7 @@ async function readYouTube() {
 	const params = new URLSearchParams({
 		part: 'snippet',
 		type: 'video',
-		maxResults: '4',
+		maxResults: '6',
 		q: query,
 		relevanceLanguage: 'it',
 		regionCode: 'IT',
@@ -133,7 +151,12 @@ async function readYouTube() {
 			snippet?: {
 				title?: string
 				channelTitle?: string
+				description?: string
 				publishedAt?: string
+				thumbnails?: {
+					medium?: { url?: string }
+					high?: { url?: string }
+				}
 			}
 		}>
 	}
@@ -150,6 +173,14 @@ async function readYouTube() {
 					title: decodeXml(title),
 					link: `https://www.youtube.com/watch?v=${videoId}`,
 					topic: 'video',
+					summary: summarize(
+						item.snippet?.description || '',
+						'Guarda il video e prepara una frase utile per parlarne.'
+					),
+					thumbnailUrl:
+						item.snippet?.thumbnails?.high?.url ||
+						item.snippet?.thumbnails?.medium?.url,
+					embedUrl: `https://www.youtube.com/embed/${videoId}`,
 					publishedAt: item.snippet?.publishedAt,
 					prompt: `Ho trovato questo video: "${decodeXml(
 						title
@@ -174,7 +205,7 @@ export default async () => {
 	])
 	const rssItems = feedResults.flat()
 	return Response.json({
-		items: [...youtube.items, ...rssItems].slice(0, 8),
+		items: [...youtube.items, ...rssItems].slice(0, 18),
 		diagnostics: {
 			youtube: {
 				configured: youtube.configured,

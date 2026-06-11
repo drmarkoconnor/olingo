@@ -13,6 +13,9 @@ export type SourceItem = {
 	title: string
 	link: string
 	topic: string
+	summary?: string
+	thumbnailUrl?: string
+	embedUrl?: string
 	publishedAt?: string
 	prompt: string
 }

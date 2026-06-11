@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, Newspaper, Play, RefreshCw } from 'lucide-react'
+import { CalendarDays, ExternalLink, Newspaper, Play, RefreshCw } from 'lucide-react'
 import {
 	fallbackSourceItems,
 	italianSources,
@@ -24,6 +24,8 @@ export default function Sources() {
 	const [loading, setLoading] = useState(false)
 	const [activePrompt, setActivePrompt] = useState<SourceItem>(fallbackSourceItems[0])
 	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>()
+	const videoItems = items.filter(isVideoItem)
+	const articleItems = items.filter((item) => !isVideoItem(item))
 
 	async function loadSources() {
 		setLoading(true)
@@ -77,20 +79,106 @@ export default function Sources() {
 				</div>
 			</section>
 
-			<div className="source-grid">
-				{items.map((item) => (
-					<button
-						type="button"
-						className={
-							activePrompt.id === item.id ? 'source-item active' : 'source-item'
-						}
-						key={item.id}
-						onClick={() => setActivePrompt(item)}>
-						<span>{item.sourceName}</span>
-						<strong>{item.title}</strong>
-					</button>
-				))}
-			</div>
+			<section className="source-panel">
+				<div className="source-panel-header">
+					<div>
+						<p className="eyebrow">Video choices</p>
+						<h2>Pick a clip</h2>
+					</div>
+					<span>{getSourceNotes(getYoutubeSource(), diagnostics)}</span>
+				</div>
+
+				{videoItems.length ? (
+					<div className="video-choice-grid">
+						{videoItems.map((item) => (
+							<article
+								className={
+									activePrompt.id === item.id
+										? 'video-choice-card active'
+										: 'video-choice-card'
+								}
+								key={item.id}>
+								<div className="video-frame">
+									<iframe
+										allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+										allowFullScreen
+										src={item.embedUrl}
+										title={item.title}
+									/>
+								</div>
+								<div className="source-card-body">
+									<span>{item.sourceName}</span>
+									<strong>{item.title}</strong>
+									<p>{item.summary}</p>
+									<div className="source-card-actions">
+										<button
+											className="btn btn-secondary"
+											type="button"
+											onClick={() => setActivePrompt(item)}>
+											<Play size={17} />
+											Use this
+										</button>
+										<a href={item.link} target="_blank" rel="noreferrer">
+											<ExternalLink size={16} />
+											Open
+										</a>
+									</div>
+								</div>
+							</article>
+						))}
+					</div>
+				) : (
+					<div className="source-empty">
+						<Play size={22} />
+						<p>{getSourceNotes(getYoutubeSource(), diagnostics)}</p>
+					</div>
+				)}
+			</section>
+
+			<section className="source-panel">
+				<div className="source-panel-header">
+					<div>
+						<p className="eyebrow">Newspaper prompts</p>
+						<h2>Today in Italian</h2>
+					</div>
+					<span>{articleItems.length} articles loaded</span>
+				</div>
+
+				<div className="article-choice-grid">
+					{articleItems.map((item) => (
+						<article
+							className={
+								activePrompt.id === item.id
+									? 'article-choice-card active'
+									: 'article-choice-card'
+							}
+							key={item.id}>
+							<div className="article-meta">
+								<span>{item.sourceName}</span>
+								<small>
+									<CalendarDays size={14} />
+									{formatSourceDate(item.publishedAt)}
+								</small>
+							</div>
+							<strong>{item.title}</strong>
+							<p>{item.summary}</p>
+							<div className="source-card-actions">
+								<button
+									className="btn btn-secondary"
+									type="button"
+									onClick={() => setActivePrompt(item)}>
+									<Newspaper size={17} />
+									Use article
+								</button>
+								<a href={item.link} target="_blank" rel="noreferrer">
+									<ExternalLink size={16} />
+									Read
+								</a>
+							</div>
+						</article>
+					))}
+				</div>
+			</section>
 
 			<div className="source-grid">
 				{italianSources.map((source) => (
@@ -115,6 +203,24 @@ export default function Sources() {
 			</div>
 		</div>
 	)
+}
+
+function isVideoItem(item: SourceItem) {
+	return item.id.startsWith('youtube-') && Boolean(item.embedUrl)
+}
+
+function getYoutubeSource() {
+	return italianSources.find((source) => source.id === 'youtube-italian-culture')!
+}
+
+function formatSourceDate(value?: string) {
+	if (!value) return 'Today'
+	const date = new Date(value)
+	if (Number.isNaN(date.getTime())) return 'Today'
+	return new Intl.DateTimeFormat('en-GB', {
+		day: 'numeric',
+		month: 'short',
+	}).format(date)
 }
 
 function getSourceUrl(source: ItalianSource, items: SourceItem[]) {
