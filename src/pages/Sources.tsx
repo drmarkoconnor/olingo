@@ -3,20 +3,38 @@ import { ExternalLink, Newspaper, Play, RefreshCw } from 'lucide-react'
 import {
 	fallbackSourceItems,
 	italianSources,
+	type ItalianSource,
 	type SourceItem,
 } from '@/learning/sources'
+
+type SourceDiagnostics = {
+	youtube?: {
+		configured: boolean
+		status: string
+		count: number
+		error: string | null
+	}
+	rss?: {
+		count: number
+	}
+}
 
 export default function Sources() {
 	const [items, setItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [loading, setLoading] = useState(false)
 	const [activePrompt, setActivePrompt] = useState<SourceItem>(fallbackSourceItems[0])
+	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>(null)
 
 	async function loadSources() {
 		setLoading(true)
 		try {
 			const response = await fetch('/api/italian-sources')
 			if (!response.ok) throw new Error('source unavailable')
-			const data = (await response.json()) as { items: SourceItem[] }
+			const data = (await response.json()) as {
+				items: SourceItem[]
+				diagnostics?: SourceDiagnostics
+			}
+			setDiagnostics(data.diagnostics ?? null)
 			if (data.items.length) {
 				setItems(data.items)
 				setActivePrompt(data.items[0])
@@ -24,6 +42,7 @@ export default function Sources() {
 		} catch {
 			setItems(fallbackSourceItems)
 			setActivePrompt(fallbackSourceItems[0])
+			setDiagnostics(null)
 		} finally {
 			setLoading(false)
 		}
@@ -77,7 +96,7 @@ export default function Sources() {
 				{italianSources.map((source) => (
 					<a
 						className="source-card"
-						href={source.url}
+						href={getSourceUrl(source, items)}
 						key={source.id}
 						target="_blank"
 						rel="noreferrer">
@@ -90,7 +109,7 @@ export default function Sources() {
 						</div>
 						<span>{source.topic}</span>
 						<strong>{source.name}</strong>
-						<p>{source.notes}</p>
+						<p>{getSourceNotes(source, diagnostics)}</p>
 					</a>
 				))}
 			</div>
@@ -98,3 +117,24 @@ export default function Sources() {
 	)
 }
 
+function getSourceUrl(source: ItalianSource, items: SourceItem[]) {
+	if (source.id !== 'youtube-italian-culture') return source.url
+
+	const firstYoutubeItem = items.find((item) => item.id.startsWith('youtube-'))
+	return firstYoutubeItem?.link ?? source.url
+}
+
+function getSourceNotes(source: ItalianSource, diagnostics: SourceDiagnostics | null) {
+	if (source.id !== 'youtube-italian-culture') return source.notes
+
+	const youtube = diagnostics?.youtube
+	if (youtube?.status === 'ok') {
+		return `Live YouTube search is enabled. ${youtube.count} video prompts loaded.`
+	}
+
+	if (youtube?.configured) {
+		return 'YouTube key is present, but live search did not return usable videos.'
+	}
+
+	return 'Add YOUTUBE_API_KEY in Netlify to enable live video prompts.'
+}

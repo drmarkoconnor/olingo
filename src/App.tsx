@@ -76,11 +76,13 @@ export default function App() {
 function TopRightStatus() {
 	const { email } = useAuth()
 	const { syncing, syncAll } = useSync()
+	const statusLabel = email ?? (hasSupabase() ? 'sign in' : 'local mode')
+
 	return (
 		<div className="top-status">
 			<span>
 				{hasSupabase() ? <Cloud size={14} /> : <WifiOff size={14} />}
-				{email ? email : 'offline'}
+				{statusLabel}
 			</span>
 			{hasSupabase() && (
 				<button
