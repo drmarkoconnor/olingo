@@ -55,8 +55,8 @@ export const italianSources: ItalianSource[] = [
 		name: 'YouTube Italian Culture',
 		type: 'video',
 		topic: 'video',
-		url: 'https://developers.google.com/youtube/v3/docs/search/list',
-		notes: 'Requires an API key before live video search is enabled.',
+		url: 'https://www.youtube.com/results?search_query=italiano+cultura+Milano',
+		notes: 'Live video prompts load from YouTube when the server key is configured.',
 	},
 ]
 
@@ -80,4 +80,3 @@ export const fallbackSourceItems: SourceItem[] = [
 			'Ho visto una notizia su un evento in Lombardia. Che cosa ti interessa di piu?',
 	},
 ]
-

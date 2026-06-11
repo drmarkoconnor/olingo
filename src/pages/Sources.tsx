@@ -23,7 +23,7 @@ export default function Sources() {
 	const [items, setItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [loading, setLoading] = useState(false)
 	const [activePrompt, setActivePrompt] = useState<SourceItem>(fallbackSourceItems[0])
-	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>(null)
+	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>()
 
 	async function loadSources() {
 		setLoading(true)
@@ -124,8 +124,12 @@ function getSourceUrl(source: ItalianSource, items: SourceItem[]) {
 	return firstYoutubeItem?.link ?? source.url
 }
 
-function getSourceNotes(source: ItalianSource, diagnostics: SourceDiagnostics | null) {
+function getSourceNotes(
+	source: ItalianSource,
+	diagnostics: SourceDiagnostics | null | undefined,
+) {
 	if (source.id !== 'youtube-italian-culture') return source.notes
+	if (diagnostics === undefined) return 'Checking live YouTube source...'
 
 	const youtube = diagnostics?.youtube
 	if (youtube?.status === 'ok') {
