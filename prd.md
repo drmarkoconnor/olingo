@@ -1,4 +1,12 @@
-# Project Requirements: Italian Vocabulary Flashcard Learning App
+# Superseded PRD: Italian Vocabulary Flashcard Learning App
+
+This document describes the original flashcard starter app. It is retained for
+historical context only.
+
+The current product direction is documented in [docs/README.md](docs/README.md)
+and is focused on an A2-to-B1 Italian sentence-production game with daily
+sprints, photoreal scene quests, mistake repair, fluency stats, and future
+multi-user collaboration.
 
 ## Introduction
 

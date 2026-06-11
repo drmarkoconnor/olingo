@@ -1,7 +1,16 @@
-# Olingo — Italian Vocabulary Flashcards (PWA)
+# Olingo
 
-A mobile-first React + TypeScript Progressive Web App to learn Italian
-vocabulary with spaced repetition, offline support, and CSV import.
+Olingo started as a mobile-first Italian vocabulary flashcard PWA. The current
+direction is now a more substantial A2-to-B1 Italian sentence-production game
+focused on fast, accurate typed construction for spoken conversation.
+
+The new foundation docs live in [docs/README.md](docs/README.md). They supersede
+the original flashcard-only PRD and should guide new product and engineering
+work.
+
+## Legacy Starter App
+
+The existing app still contains the original flashcard prototype:
 
 ## Features
 

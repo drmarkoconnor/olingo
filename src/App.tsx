@@ -1,34 +1,43 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
+import {
+	BarChart3,
+	BookOpen,
+	Cloud,
+	Map,
+	Newspaper,
+	RotateCcw,
+	Settings as SettingsIcon,
+	WifiOff,
+} from 'lucide-react'
 import { useAuth } from '@/store/useAuth'
 import { useSync } from '@/store/useSync'
 import { hasSupabase } from '@/lib/supabase'
 import Study from '@/pages/Study'
-import Categories from '@/pages/Categories'
-import Games from '@/pages/Games'
+import Scenes from '@/pages/Scenes'
+import Mistakes from '@/pages/Mistakes'
 import Stats from '@/pages/Stats'
 import Settings from '@/pages/Settings'
 import ImportData from '@/pages/ImportData'
+import Sources from '@/pages/Sources'
 
 export default function App() {
 	return (
 		<div className="app">
 			<header className="topbar">
-				<div
-					style={{
-						display: 'flex',
-						justifyContent: 'space-between',
-						alignItems: 'center',
-						gap: 12,
-					}}>
-					<h1>Olingo</h1>
+				<div className="brand-row">
+					<div>
+						<p className="app-kicker">Italian speaking gym</p>
+						<h1>Olingo</h1>
+					</div>
 					<TopRightStatus />
 				</div>
 			</header>
 			<main className="content">
 				<Routes>
 					<Route path="/" element={<Study />} />
-					<Route path="/categories" element={<Categories />} />
-					<Route path="/games" element={<Games />} />
+					<Route path="/scenes" element={<Scenes />} />
+					<Route path="/mistakes" element={<Mistakes />} />
+					<Route path="/sources" element={<Sources />} />
 					<Route path="/stats" element={<Stats />} />
 					<Route path="/settings" element={<Settings />} />
 					<Route path="/import" element={<ImportData />} />
@@ -36,13 +45,29 @@ export default function App() {
 			</main>
 			<nav className="tabbar">
 				<NavLink to="/" end>
-					Study
+					<BookOpen size={18} />
+					Today
 				</NavLink>
-				<NavLink to="/categories">Categories</NavLink>
-				<NavLink to="/games">Games</NavLink>
-				<NavLink to="/stats">Stats</NavLink>
-				<NavLink to="/settings">Settings</NavLink>
-				<NavLink to="/import">Import</NavLink>
+				<NavLink to="/scenes">
+					<Map size={18} />
+					Scenes
+				</NavLink>
+				<NavLink to="/mistakes">
+					<RotateCcw size={18} />
+					Mistakes
+				</NavLink>
+				<NavLink to="/stats">
+					<BarChart3 size={18} />
+					Stats
+				</NavLink>
+				<NavLink to="/sources">
+					<Newspaper size={18} />
+					Sources
+				</NavLink>
+				<NavLink to="/settings">
+					<SettingsIcon size={18} />
+					Settings
+				</NavLink>
 			</nav>
 		</div>
 	)
@@ -52,20 +77,19 @@ function TopRightStatus() {
 	const { email } = useAuth()
 	const { syncing, syncAll } = useSync()
 	return (
-		<div className="row" style={{ gap: 8 }}>
-			<span style={{ fontSize: 12, color: 'var(--muted)' }}>
+		<div className="top-status">
+			<span>
+				{hasSupabase() ? <Cloud size={14} /> : <WifiOff size={14} />}
 				{email ? email : 'offline'}
 			</span>
 			{hasSupabase() && (
 				<button
-					className="btn btn-muted"
-					style={{ flex: 'none', padding: '6px 10px' }}
+					className="small-sync"
 					disabled={syncing}
 					onClick={syncAll}>
-					{syncing ? 'Sync…' : 'Sync'}
+					{syncing ? 'Syncing' : 'Sync'}
 				</button>
 			)}
 		</div>
 	)
 }
-

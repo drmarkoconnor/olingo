@@ -4,8 +4,18 @@ import { useSync } from '@/store/useSync'
 import { hasSupabase } from '@/lib/supabase'
 
 export default function Settings() {
-	const { dailyGoal, sound, tts, setDailyGoal, setSound, setTTS } =
-		useSettings()
+	const {
+		dailyGoal,
+		sound,
+		tts,
+		targetLevel,
+		sentenceLength,
+		setDailyGoal,
+		setSound,
+		setTTS,
+		setTargetLevel,
+		setSentenceLength,
+	} = useSettings()
 	const { userId, email, signInWithGoogle, signOut } = useAuth()
 	const { syncing, lastSyncAt, error, syncAll } = useSync()
 	const supaEnabled = hasSupabase()
@@ -47,12 +57,40 @@ export default function Settings() {
 			)}
 
 			<div className="tile">
-				<label>Daily goal (cards)</label>
+				<label>Daily goal (minutes)</label>
 				<input
 					type="number"
 					value={dailyGoal}
 					onChange={(e) => setDailyGoal(parseInt(e.target.value || '0'))}
 				/>
+			</div>
+			<div className="tile">
+				<label>Level</label>
+				<div className="segmented">
+					{(['A1', 'A2', 'B1'] as const).map((level) => (
+						<button
+							type="button"
+							key={level}
+							className={targetLevel === level ? 'active' : ''}
+							onClick={() => setTargetLevel(level)}>
+							{level}
+						</button>
+					))}
+				</div>
+			</div>
+			<div className="tile">
+				<label>Sentence length</label>
+				<div className="segmented">
+					{(['short', 'medium', 'long'] as const).map((length) => (
+						<button
+							type="button"
+							key={length}
+							className={sentenceLength === length ? 'active' : ''}
+							onClick={() => setSentenceLength(length)}>
+							{length}
+						</button>
+					))}
+				</div>
 			</div>
 			<div className="tile">
 				<label>
@@ -106,4 +144,3 @@ export default function Settings() {
 		</div>
 	)
 }
-

@@ -29,10 +29,69 @@ export type ReviewLog = {
 	correct: 0 | 1
 }
 
+export type ExerciseState = {
+	userId: string
+	exerciseId: string
+	lastReviewedAt?: string | null
+	nextDueAt?: string | null
+	correctCount: number
+	wrongCount: number
+	ease: number
+	intervalDays: number
+	archived: 0 | 1
+}
+
+export type ExerciseLog = {
+	id?: number
+	userId: string
+	exerciseId: string
+	ts: string
+	outcome: 'again' | 'hard' | 'good' | 'easy'
+	correct: 0 | 1
+	msUsed: number
+	hintsUsed: number
+	conceptHintsUsed?: number
+	wordBankUsed?: 0 | 1
+	mode?: string
+	answer: string
+}
+
+export type MistakeItem = {
+	id: string
+	userId: string
+	exerciseId: string
+	sceneId: string
+	promptEnglish: string
+	userAnswer: string
+	correctedItalian: string
+	tags: string[]
+	explanation: string
+	status: 'open' | 'reviewing' | 'repaired'
+	nextDueAt?: string | null
+	createdAt: string
+	lastReviewedAt?: string | null
+	attempts: number
+}
+
+export type MisspellingItem = {
+	id: string
+	userId: string
+	word: string
+	correction: string
+	count: number
+	firstSeenAt: string
+	lastSeenAt: string
+	exerciseIds: string[]
+}
+
 export class OlingoDB extends Dexie {
 	words!: Table<Word, string>
 	userCards!: Table<UserCard, [string, string]> // compound pk (userId+wordId)
 	reviewLogs!: Table<ReviewLog, number>
+	exerciseStates!: Table<ExerciseState, [string, string]>
+	exerciseLogs!: Table<ExerciseLog, number>
+	mistakes!: Table<MistakeItem, string>
+	misspellings!: Table<MisspellingItem, string>
 
 	constructor() {
 		super('olingo')
@@ -42,8 +101,28 @@ export class OlingoDB extends Dexie {
 			userCards: '&[userId+wordId], userId, wordId, nextDueAt, archived',
 			reviewLogs: '++id, userId, wordId, ts',
 		})
+		this.version(2).stores({
+			words: '&id, italian, english, pos, category',
+			userCards: '&[userId+wordId], userId, wordId, nextDueAt, archived',
+			reviewLogs: '++id, userId, wordId, ts',
+			exerciseStates:
+				'&[userId+exerciseId], userId, exerciseId, nextDueAt, archived',
+			exerciseLogs: '++id, userId, exerciseId, ts, outcome, correct',
+			mistakes:
+				'&id, userId, exerciseId, sceneId, status, nextDueAt, createdAt, *tags',
+		})
+		this.version(3).stores({
+			words: '&id, italian, english, pos, category',
+			userCards: '&[userId+wordId], userId, wordId, nextDueAt, archived',
+			reviewLogs: '++id, userId, wordId, ts',
+			exerciseStates:
+				'&[userId+exerciseId], userId, exerciseId, nextDueAt, archived',
+			exerciseLogs: '++id, userId, exerciseId, ts, outcome, correct',
+			mistakes:
+				'&id, userId, exerciseId, sceneId, status, nextDueAt, createdAt, *tags',
+			misspellings: '&id, userId, word, correction, lastSeenAt',
+		})
 	}
 }
 
 export const db = new OlingoDB()
-
