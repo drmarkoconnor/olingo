@@ -118,6 +118,7 @@ async function readYouTube() {
 		relevanceLanguage: 'it',
 		regionCode: 'IT',
 		safeSearch: 'moderate',
+		videoEmbeddable: 'true',
 		key: apiKey,
 	})
 
