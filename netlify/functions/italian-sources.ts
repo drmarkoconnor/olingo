@@ -132,8 +132,3 @@ export default async () => {
 		fetchedAt: new Date().toISOString(),
 	})
 }
-
-export const config = {
-	path: '/api/italian-sources',
-	method: 'GET',
-}
