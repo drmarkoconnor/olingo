@@ -2,13 +2,17 @@ import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from 'rea
 import {
 	ArrowRight,
 	BookOpen,
+	CalendarDays,
 	Check,
+	CheckCircle2,
 	Clock3,
+	ExternalLink,
 	Layers,
 	Lightbulb,
 	MapPin,
 	MessageCircle,
 	Mic2,
+	Newspaper,
 	Play,
 	RotateCcw,
 	ShieldCheck,
@@ -25,30 +29,75 @@ import {
 	getVocabularyForScene,
 	scenes,
 	sprintPhaseLabels,
-	sprintPhaseOrder,
 	type SceneVocabulary,
-	type SprintPhase,
 } from '@/learning/content'
+import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
+import {
+	completeDailySessionUnit,
+	getActiveDailyItem,
+	getDailySessionProgress,
+	getOrCreateDailySession,
+	getRevisionAdvice,
+	getTodayDateKey,
+	loadDueMistakes,
+	mistakeToRevisionTags,
+	sessionActivityLabels,
+} from '@/learning/daily-session'
 import {
 	loadDailySprint,
 	submitExerciseAnswer,
+	submitMistakeRepair,
 	type SprintItem,
 } from '@/learning/progress'
+import {
+	fallbackSourceItems,
+	type SourceItem,
+} from '@/learning/sources'
 import type { EvaluationResult } from '@/learning/evaluator'
+import { canTTS, speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import { canTTS, speak } from '@/lib/tts'
-import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
+import type { DailySession, DailySessionItem, MistakeItem } from '@/storage/db'
 
 type FeedbackState = {
 	result: EvaluationResult
 	model: string
+	msUsed: number
 }
 
-type PracticeMode = 'sentence' | 'match' | 'flashcards'
+type SourceDiagnostics = {
+	youtube?: {
+		configured: boolean
+		status: string
+		count: number
+		error: string | null
+	}
+	rss?: {
+		count: number
+	}
+}
 
 function shuffleWords(words: string[]) {
 	return [...words].sort(() => Math.random() - 0.5)
+}
+
+function formatDuration(ms: number) {
+	const totalSeconds = Math.max(0, Math.round(ms / 1000))
+	const minutes = Math.floor(totalSeconds / 60)
+	const seconds = totalSeconds % 60
+	if (minutes <= 0) return `${seconds}s`
+	return `${minutes}m ${String(seconds).padStart(2, '0')}s`
+}
+
+function isVideoItem(item: SourceItem) {
+	return item.id.startsWith('youtube-') && Boolean(item.embedUrl)
+}
+
+function sourceTags(item: SourceItem) {
+	const tags = ['input']
+	if (/news|ansa|politic/i.test(`${item.topic} ${item.sourceName}`)) tags.push('news')
+	if (/video|youtube/i.test(`${item.topic} ${item.sourceName}`)) tags.push('culture')
+	return tags
 }
 
 export default function Study() {
@@ -61,66 +110,130 @@ export default function Study() {
 		setTargetLevel,
 		setSentenceLength,
 	} = useSettings()
-	const [queue, setQueue] = useState<SprintItem[]>([])
-	const [index, setIndex] = useState(0)
+	const [todayKey, setTodayKey] = useState(() => getTodayDateKey())
+	const [session, setSession] = useState<DailySession | null>(null)
+	const [sessionItems, setSessionItems] = useState<DailySessionItem[]>([])
+	const [sentenceQueue, setSentenceQueue] = useState<SprintItem[]>([])
+	const [repairMistakes, setRepairMistakes] = useState<MistakeItem[]>([])
+	const [loading, setLoading] = useState(true)
 	const [answer, setAnswer] = useState('')
+	const [repairAnswer, setRepairAnswer] = useState('')
 	const [hintsRevealed, setHintsRevealed] = useState(0)
 	const [wordBankVisible, setWordBankVisible] = useState(false)
 	const [wordBankUsed, setWordBankUsed] = useState(false)
 	const [wordBankWords, setWordBankWords] = useState<string[]>([])
-	const [startedAt, setStartedAt] = useState(Date.now())
-	const [loading, setLoading] = useState(true)
-	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
-	const [completed, setCompleted] = useState(0)
-	const [sceneAction, setSceneAction] = useState('Ask opinion')
-	const [mode, setMode] = useState<PracticeMode>('sentence')
 	const [spokenFirst, setSpokenFirst] = useState(false)
+	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
+	const [repairFeedback, setRepairFeedback] = useState<FeedbackState | null>(null)
+	const [unitStartedAt, setUnitStartedAt] = useState(Date.now())
+	const [sourceItems, setSourceItems] = useState<SourceItem[]>(fallbackSourceItems)
+	const [sourceDiagnostics, setSourceDiagnostics] =
+		useState<SourceDiagnostics | null>()
+	const [sourceLoading, setSourceLoading] = useState(false)
+	const [sourceReflection, setSourceReflection] = useState('')
+
+	useEffect(() => {
+		const timer = window.setInterval(() => {
+			const nextKey = getTodayDateKey()
+			if (nextKey !== todayKey) setTodayKey(nextKey)
+		}, 60_000)
+		return () => window.clearInterval(timer)
+	}, [todayKey])
 
 	useEffect(() => {
 		let mounted = true
-		setLoading(true)
-		const sprintLimit = Math.max(8, Math.min(18, Math.round(dailyGoal / 2)))
-		loadDailySprint(userId, sprintLimit, {
-			targetLevel,
-			sentenceLength,
-			sceneAction,
-			programWeek,
-		})
-			.then((items) => {
-				if (!mounted) return
-				setQueue(items)
-				setIndex(0)
-				setStartedAt(Date.now())
-				setFeedback(null)
-				setCompleted(0)
-				setSpokenFirst(false)
+		async function load() {
+			setLoading(true)
+			const sprintLimit = Math.max(12, Math.min(20, Math.round(dailyGoal / 2) + 4))
+			const queue = await loadDailySprint(userId, sprintLimit, {
+				targetLevel,
+				sentenceLength,
+				sceneAction: 'Ask opinion',
+				programWeek,
 			})
+			const sentenceItems = queue
+				.filter((item) => !item.sourceMistakeId)
+				.slice(0, 8)
+			const dueMistakes = await loadDueMistakes(userId, 3)
+			const sceneId =
+				sentenceItems[0]?.exercise.sceneId ?? queue[0]?.exercise.sceneId ?? scenes[0].id
+			const vocabularyCount = getVocabularyForScene(sceneId).length
+			const bundle = await getOrCreateDailySession(
+				userId,
+				{
+					programWeek,
+					dailyGoal,
+					vocabularyCount,
+					sentenceCount: sentenceItems.length,
+					repairCount: dueMistakes.length,
+				},
+				todayKey
+			)
+			if (!mounted) return
+			setSentenceQueue(sentenceItems)
+			setRepairMistakes(dueMistakes)
+			setSession(bundle.session)
+			setSessionItems(bundle.items)
+			setUnitStartedAt(Date.now())
+			setAnswer('')
+			setRepairAnswer('')
+			setFeedback(null)
+			setRepairFeedback(null)
+			setSpokenFirst(false)
+		}
+		load()
+			.catch(console.error)
 			.finally(() => mounted && setLoading(false))
 		return () => {
 			mounted = false
 		}
-	}, [dailyGoal, programWeek, sceneAction, sentenceLength, targetLevel, userId])
+	}, [
+		dailyGoal,
+		programWeek,
+		sentenceLength,
+		targetLevel,
+		todayKey,
+		userId,
+	])
 
-	const current = queue[index]
+	useEffect(() => {
+		loadSources()
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [])
+
+	const activeItem = useMemo(
+		() => getActiveDailyItem(sessionItems),
+		[sessionItems]
+	)
+	const sentenceActivity = sessionItems.find((item) => item.type === 'sentence')
+	const repairActivity = sessionItems.find((item) => item.type === 'repair')
+	const currentSentenceIndex = Math.min(
+		sentenceActivity?.completedCount ?? 0,
+		Math.max(0, sentenceQueue.length - 1)
+	)
+	const current = sentenceQueue[currentSentenceIndex]
+	const currentMistake = repairMistakes[
+		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
+	]
 	const scene = useMemo(
 		() => (current ? getScene(current.exercise.sceneId) : scenes[0]),
 		[current]
 	)
-	const currentPhase: SprintPhase = current
-		? current.focusPhase ?? getExercisePhase(current.exercise)
-		: 'warmup'
-	const currentAction = current ? getExerciseAction(current.exercise) : sceneAction
-	const progress = queue.length ? Math.round((completed / queue.length) * 100) : 0
+	const vocabulary = useMemo(
+		() => getVocabularyForScene(scene.id).slice(0, 8),
+		[scene.id]
+	)
+	const transferSource = useMemo(
+		() => sourceItems.find(isVideoItem) ?? sourceItems[0] ?? fallbackSourceItems[0],
+		[sourceItems]
+	)
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
-	const vocabulary = useMemo(() => getVocabularyForScene(scene.id), [scene.id])
 	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
 	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
-
-	useEffect(() => {
-		if (!scene.actions.includes(sceneAction)) {
-			setSceneAction(scene.actions[0])
-		}
-	}, [scene.actions, sceneAction])
+	const progress = getDailySessionProgress(sessionItems)
+	const currentPhase = current ? getExercisePhase(current.exercise) : 'warmup'
+	const currentAction = current ? getExerciseAction(current.exercise) : 'Build'
+	const revisionAdvice = getRevisionAdvice(session?.revisionTags ?? [])
 
 	useEffect(() => {
 		if (!current) return
@@ -135,12 +248,56 @@ export default function Study() {
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
+		setAnswer('')
+		setFeedback(null)
+		setUnitStartedAt(Date.now())
 	}, [current?.exercise.id])
 
-	async function handleSubmit(event: FormEvent) {
+	useEffect(() => {
+		setRepairAnswer('')
+		setRepairFeedback(null)
+		setUnitStartedAt(Date.now())
+	}, [currentMistake?.id])
+
+	async function loadSources() {
+		setSourceLoading(true)
+		try {
+			const response = await fetch('/api/italian-sources')
+			if (!response.ok) throw new Error('source unavailable')
+			const data = (await response.json()) as {
+				items: SourceItem[]
+				diagnostics?: SourceDiagnostics
+			}
+			setSourceDiagnostics(data.diagnostics ?? null)
+			if (data.items.length) setSourceItems(data.items)
+		} catch {
+			setSourceItems(fallbackSourceItems)
+			setSourceDiagnostics(null)
+		} finally {
+			setSourceLoading(false)
+		}
+	}
+
+	async function recordUnit(
+		item: DailySessionItem | null,
+		result: {
+			activeMs?: number
+			success?: boolean
+			mistake?: boolean
+			tags?: string[]
+		}
+	) {
+		if (!item) return
+		const bundle = await completeDailySessionUnit(item.id, result)
+		setSession(bundle.session)
+		setSessionItems(bundle.items)
+		setUnitStartedAt(Date.now())
+	}
+
+	async function handleSentenceSubmit(event: FormEvent) {
 		event.preventDefault()
 		if (!current || feedback || !answer.trim()) return
-		const msUsed = Date.now() - startedAt
+		const msUsed = Date.now() - unitStartedAt
 		const result = await submitExerciseAnswer({
 			userId,
 			item: current,
@@ -155,19 +312,59 @@ export default function Study() {
 		setFeedback({
 			result: result.result,
 			model: current.exercise.targetItalian,
+			msUsed,
 		})
 	}
 
-	function nextCard() {
-		setCompleted((value) => value + 1)
-		setIndex((value) => value + 1)
+	async function nextSentence() {
+		if (!feedback || !current) return
+		await recordUnit(sentenceActivity ?? null, {
+			activeMs: feedback.msUsed,
+			success: feedback.result.communicative,
+			mistake: !feedback.result.accepted,
+			tags: feedback.result.errorTags.length
+				? feedback.result.errorTags
+				: feedback.result.accepted
+				? []
+				: current.exercise.tags,
+		})
 		setAnswer('')
 		setHintsRevealed(0)
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
-		setStartedAt(Date.now())
 		setFeedback(null)
+	}
+
+	async function handleRepairSubmit(event: FormEvent) {
+		event.preventDefault()
+		if (!currentMistake || repairFeedback || !repairAnswer.trim()) return
+		const msUsed = Date.now() - unitStartedAt
+		const result = await submitMistakeRepair({
+			userId,
+			mistake: currentMistake,
+			answer: repairAnswer,
+			msUsed,
+		})
+		setRepairFeedback({
+			result: result.result,
+			model: currentMistake.correctedItalian,
+			msUsed,
+		})
+	}
+
+	async function nextRepair() {
+		if (!repairFeedback || !currentMistake) return
+		await recordUnit(repairActivity ?? null, {
+			activeMs: repairFeedback.msUsed,
+			success: repairFeedback.result.communicative,
+			mistake: !repairFeedback.result.communicative,
+			tags: repairFeedback.result.errorTags.length
+				? repairFeedback.result.errorTags
+				: mistakeToRevisionTags(currentMistake),
+		})
+		setRepairAnswer('')
+		setRepairFeedback(null)
 	}
 
 	function revealHint() {
@@ -197,41 +394,25 @@ export default function Study() {
 			<div className="today-shell">
 				<div className="hero-scene skeleton" />
 				<div className="panel">
-					<p className="eyebrow">Preparing sprint</p>
-					<h2>Building today&apos;s Italian gym...</h2>
+					<p className="eyebrow">Preparing today</p>
+					<h2>Building your daily Italian session...</h2>
 				</div>
 			</div>
 		)
 	}
 
-	if (!current) {
+	if (session && !activeItem) {
 		return (
-			<div className="completion-screen">
-				<div className="completion-badge">
-					<Check size={38} />
-				</div>
-				<p className="eyebrow">Daily Sprint Complete</p>
-				<h2>Good session. Your next drills are now scheduled.</h2>
-				<p>
-					You completed {completed} production prompts. Any rough answers have
-					been sent to Mistake Gym for repair practice.
-				</p>
-				<div className="action-row">
-					<Link className="btn btn-primary" to="/mistakes">
-						<RotateCcw size={18} />
-						Practise mistakes
-					</Link>
-					<Link className="btn btn-secondary" to="/scenes">
-						<MapPin size={18} />
-						Explore scenes
-					</Link>
-				</div>
-			</div>
+			<CompletionScreen
+				session={session}
+				items={sessionItems}
+				advice={revisionAdvice}
+			/>
 		)
 	}
 
 	return (
-		<div className="today-shell">
+		<div className="today-shell guided-today">
 			<section
 				className="hero-scene"
 				style={
@@ -249,21 +430,11 @@ export default function Study() {
 						<span className="scene-pill">{scene.level}</span>
 					</div>
 					<div>
-						<p className="eyebrow">Today&apos;s quest</p>
-						<h2>{scene.title}</h2>
-						<p>{scene.objective}</p>
+						<p className="eyebrow">Today&apos;s session</p>
+						<h2>{stage.title}</h2>
+						<p>{stage.goals.slice(0, 3).join(' - ')}</p>
 					</div>
-					<div className="scene-actions" aria-label="Scene actions">
-						{scene.actions.map((action) => (
-							<button
-								className={action === sceneAction ? 'chip active' : 'chip'}
-								key={action}
-								type="button"
-								onClick={() => setSceneAction(action)}>
-								{action}
-							</button>
-						))}
-					</div>
+					<SessionChecklist items={sessionItems} activeItem={activeItem} />
 					<a
 						className="photo-credit"
 						href={scene.photoUrl}
@@ -275,27 +446,21 @@ export default function Study() {
 			</section>
 
 			<section className="sprint-panel">
-				<div className="sprint-header">
-					<div>
-						<p className="eyebrow">
-							Week {programWeek} - {dailyGoal} minute program
-						</p>
-						<h1>Build the sentence quickly</h1>
-					</div>
-					<div
-						className="progress-ring"
-						style={{ '--progress': `${progress}%` } as CSSProperties}
-						aria-label={`${progress}% complete`}>
-						<span>{progress}%</span>
-					</div>
-				</div>
+				<SessionProgressHeader
+					dateKey={todayKey}
+					dailyGoal={dailyGoal}
+					progress={progress}
+					activeMs={session?.activeMs ?? 0}
+				/>
 
-				<div className="curriculum-card">
+				<div className="curriculum-card daily-contract">
 					<div>
 						<span>Current focus</span>
 						<strong>{stage.title}</strong>
 					</div>
-					<p>{stage.goals.slice(0, 3).join(' - ')}</p>
+					<p>
+						{progress.completed} of {progress.planned} required activities done.
+					</p>
 				</div>
 
 				<div className="session-plan" aria-label="Daily session plan">
@@ -303,43 +468,6 @@ export default function Study() {
 						<div key={item.id}>
 							<strong>{item.minutes}m</strong>
 							<span>{item.label}</span>
-						</div>
-					))}
-				</div>
-
-				<div className="mode-row" aria-label="Practice mode">
-					<button
-						type="button"
-						className={mode === 'sentence' ? 'mode-button active' : 'mode-button'}
-						onClick={() => setMode('sentence')}>
-						<MessageCircle size={18} />
-						Sentence
-					</button>
-					<button
-						type="button"
-						className={mode === 'match' ? 'mode-button active' : 'mode-button'}
-						onClick={() => setMode('match')}>
-						<Shuffle size={18} />
-						Match
-					</button>
-					<button
-						type="button"
-						className={
-							mode === 'flashcards' ? 'mode-button active' : 'mode-button'
-						}
-						onClick={() => setMode('flashcards')}>
-						<BookOpen size={18} />
-						Cards
-					</button>
-				</div>
-
-				<div className="sprint-steps" aria-label="Daily sprint phases">
-					{sprintPhaseOrder.map((phase) => (
-						<div
-							className={phase === currentPhase ? 'sprint-step active' : 'sprint-step'}
-							key={phase}>
-							<span>{sprintPhaseOrder.indexOf(phase) + 1}</span>
-							<strong>{sprintPhaseLabels[phase]}</strong>
 						</div>
 					))}
 				</div>
@@ -369,188 +497,98 @@ export default function Study() {
 					</div>
 				</div>
 
-				<div className="quest-meta">
-					<span>
-						<Target size={15} />
-						{current.exercise.phraseFamily}
-					</span>
-					<span>
-						<Clock3 size={15} />
-						Prompt {index + 1} of {queue.length}
-					</span>
-					<span>
-						<MessageCircle size={15} />
-						{currentAction}
-					</span>
-					<span>
-						<ShieldCheck size={15} />
-						{current.sourceMistakeId ? 'Due repair' : sprintPhaseLabels[currentPhase]}
-					</span>
-				</div>
-
-				{current.exercise.npcLine && (
-					<div className="npc-line">
-						<span>NPC</span>
-						<p>{current.exercise.npcLine}</p>
-					</div>
-				)}
-
-				{mode === 'match' && <VocabularyMatch vocabulary={vocabulary} />}
-
-				{mode === 'flashcards' && <SceneFlashcards vocabulary={vocabulary} />}
-
-				{mode === 'sentence' && (
-				<form className="answer-card" onSubmit={handleSubmit}>
-					<label htmlFor="answer">Say this in Italian</label>
-					<p className="prompt">{current.exercise.promptEnglish}</p>
-					<div className={spokenFirst ? 'speak-gate done' : 'speak-gate'}>
-						<div>
-							<span>
-								<Mic2 size={16} />
-								Say it first
-							</span>
-							<p>
-								{current.exercise.spokenCue ??
-									'Make a rough spoken attempt before you type. It does not need to be perfect.'}
-							</p>
-						</div>
-						<button
-							className={spokenFirst ? 'btn btn-primary' : 'btn btn-secondary'}
-							type="button"
-							onClick={() => setSpokenFirst(true)}>
-							<Mic2 size={18} />
-							{spokenFirst ? 'Spoken' : 'I said it'}
-						</button>
-					</div>
-					<textarea
-						id="answer"
-						value={answer}
-						disabled={Boolean(feedback)}
-						onChange={(event) => setAnswer(event.target.value)}
-						placeholder="Type your Italian sentence..."
-						rows={4}
-					/>
-					{visibleHints.length > 0 && (
-						<div className="hint-stack">
-							{visibleHints.map((hint) => (
-								<div className="hint" key={hint}>
-									<Lightbulb size={15} />
-									{hint}
-								</div>
-							))}
-						</div>
-					)}
-
-					{wordBankVisible && (
-						<div className="word-bank" aria-label="Word bank">
-							{wordBankWords.map((word, wordIndex) => (
-								<button
-									type="button"
-									key={`${word}-${wordIndex}`}
-									onClick={() => addWord(word)}>
-									{word}
-								</button>
-							))}
-						</div>
-					)}
-
-					{feedback && (
-						<div
-							className={
-								feedback.result.spellingOnly
-									? 'feedback feedback-spelling'
-									: feedback.result.accepted
-									? 'feedback feedback-good'
-									: feedback.result.communicative
-									? 'feedback feedback-communicative'
-									: 'feedback feedback-repair'
-							}>
-							<strong>{feedback.result.message}</strong>
-							<span className="feedback-note">
-								{feedback.result.shortFeedback}
-							</span>
-							<p>{feedback.model}</p>
-							<div className="feedback-actions">
-								{canTTS() && (
-									<button
-										className="btn btn-secondary"
-										type="button"
-										onClick={hearModel}>
-										<Volume2 size={18} />
-										Hear model
-									</button>
-								)}
-							</div>
-							{feedback.result.spellingIssues.length > 0 && (
-								<div className="tag-row">
-										{feedback.result.spellingIssues.map((issue) => (
-											<span key={`${issue.answer}-${issue.correction}`}>
-												{issue.answer} {'->'} {issue.correction}
-											</span>
-										))}
-								</div>
-							)}
-							{feedback.result.errorTags.length > 0 && (
-								<div className="tag-row">
-									{feedback.result.errorTags.map((tag) => (
-										<span key={tag}>{tag}</span>
-									))}
-								</div>
-							)}
-							{feedback.result.repairPrompts.length > 0 && (
-								<div className="repair-prompt-list">
-									<strong>Next repair</strong>
-									{feedback.result.repairPrompts.slice(0, 2).map((prompt) => (
-										<span key={prompt}>{prompt}</span>
-									))}
-								</div>
-							)}
-						</div>
-					)}
-
-					<div className="control-bar">
-						<button
-							className="btn btn-secondary"
-							type="button"
-							disabled={
-								Boolean(feedback) ||
-								hintsRevealed >= current.exercise.hints.length
+				<ActivityShell item={activeItem}>
+					{activeItem?.type === 'match' && (
+						<GuidedVocabularyMatch
+							vocabulary={vocabulary}
+							item={activeItem}
+							onUnitComplete={(success) =>
+								recordUnit(activeItem, {
+									activeMs: Date.now() - unitStartedAt,
+									success,
+									mistake: !success,
+									tags: ['vocab'],
+								})
 							}
-							onClick={revealHint}>
-							<Lightbulb size={18} />
-							Hint
-						</button>
-						<button
-							className="btn btn-secondary"
-							type="button"
-							disabled={Boolean(feedback) || wordBankVisible}
-							onClick={revealWordBank}>
-							<Layers size={18} />
-							Words
-						</button>
-						{feedback ? (
-							<button className="btn btn-primary" type="button" onClick={nextCard}>
-								<ArrowRight size={18} />
-								Next
-							</button>
-						) : (
-							<button className="btn btn-primary" type="submit">
-								<Play size={18} />
-								Check
-							</button>
-						)}
-					</div>
-				</form>
-				)}
+						/>
+					)}
+
+					{activeItem?.type === 'recall' && (
+						<GuidedRecallCards
+							vocabulary={vocabulary}
+							item={activeItem}
+							onUnitComplete={(success) =>
+								recordUnit(activeItem, {
+									activeMs: Date.now() - unitStartedAt,
+									success,
+									mistake: !success,
+									tags: ['vocab'],
+								})
+							}
+						/>
+					)}
+
+					{activeItem?.type === 'sentence' && current && (
+						<SentenceBuilder
+							answer={answer}
+							current={current}
+							currentAction={currentAction}
+							currentPhase={currentPhase}
+							feedback={feedback}
+							hintsRevealed={hintsRevealed}
+							spokenFirst={spokenFirst}
+							visibleHints={visibleHints}
+							wordBankVisible={wordBankVisible}
+							wordBankWords={wordBankWords}
+							onAddWord={addWord}
+							onAnswer={setAnswer}
+							onHearModel={hearModel}
+							onNext={nextSentence}
+							onRevealHint={revealHint}
+							onRevealWordBank={revealWordBank}
+							onSetSpokenFirst={setSpokenFirst}
+							onSubmit={handleSentenceSubmit}
+						/>
+					)}
+
+					{activeItem?.type === 'repair' && currentMistake && (
+						<DailyRepair
+							answer={repairAnswer}
+							feedback={repairFeedback}
+							mistake={currentMistake}
+							onAnswer={setRepairAnswer}
+							onNext={nextRepair}
+							onSubmit={handleRepairSubmit}
+						/>
+					)}
+
+					{activeItem?.type === 'transfer' && (
+						<TransferActivity
+							diagnostics={sourceDiagnostics}
+							item={transferSource}
+							loading={sourceLoading}
+							reflection={sourceReflection}
+							onComplete={() =>
+								recordUnit(activeItem, {
+									activeMs: Date.now() - unitStartedAt,
+									success: true,
+									tags: sourceTags(transferSource),
+								})
+							}
+							onRefresh={loadSources}
+							onReflection={setSourceReflection}
+						/>
+					)}
+				</ActivityShell>
 
 				<div className="micro-stats">
 					<div>
 						<Sparkles size={16} />
-						<span>{completed} completed</span>
+						<span>{formatDuration(session?.activeMs ?? 0)} answering time</span>
 					</div>
 					<div>
 						<RotateCcw size={16} />
-						<span>Mistakes become repairs</span>
+						<span>{session?.mistakeCount ?? 0} repair signal(s)</span>
 					</div>
 				</div>
 			</section>
@@ -558,102 +596,405 @@ export default function Study() {
 	)
 }
 
-function VocabularyMatch({ vocabulary }: { vocabulary: SceneVocabulary[] }) {
+function SessionProgressHeader({
+	activeMs,
+	dailyGoal,
+	dateKey,
+	progress,
+}: {
+	activeMs: number
+	dailyGoal: number
+	dateKey: string
+	progress: { planned: number; completed: number; percent: number }
+}) {
+	return (
+		<div className="sprint-header guided-header">
+			<div>
+				<p className="eyebrow">
+					<CalendarDays size={14} />
+					{dateKey} - {dailyGoal} minute program
+				</p>
+				<h1>Today&apos;s finish line</h1>
+				<p className="progress-copy">
+					{progress.completed} of {progress.planned} activities -{' '}
+					{formatDuration(activeMs)} active answering
+				</p>
+			</div>
+			<div
+				className="progress-ring progress-ring-large"
+				style={{ '--progress': `${progress.percent}%` } as CSSProperties}
+				aria-label={`${progress.percent}% complete`}>
+				<span>{progress.percent}%</span>
+			</div>
+		</div>
+	)
+}
+
+function SessionChecklist({
+	activeItem,
+	items,
+}: {
+	activeItem: DailySessionItem | null
+	items: DailySessionItem[]
+}) {
+	return (
+		<div className="daily-checklist" aria-label="Today checklist">
+			{items.map((item) => (
+				<div
+					className={
+						item.status === 'complete'
+							? 'daily-check complete'
+							: activeItem?.id === item.id
+							? 'daily-check active'
+							: 'daily-check'
+					}
+					key={item.id}>
+					<span>
+						{item.status === 'complete' ? (
+							<Check size={15} />
+						) : (
+							item.sortOrder + 1
+						)}
+					</span>
+					<div>
+						<strong>{item.label}</strong>
+						<small>
+							{Math.min(item.completedCount, item.targetCount)} /{' '}
+							{item.targetCount}
+						</small>
+					</div>
+				</div>
+			))}
+		</div>
+	)
+}
+
+function ActivityShell({
+	children,
+	item,
+}: {
+	children: React.ReactNode
+	item: DailySessionItem | null
+}) {
+	if (!item) return null
+	return (
+		<div className="guided-activity">
+			<div className="guided-activity-top">
+				<div>
+					<p className="eyebrow">Up next</p>
+					<h2>{sessionActivityLabels[item.type]}</h2>
+				</div>
+				<span>
+					{Math.min(item.completedCount, item.targetCount)} / {item.targetCount}
+				</span>
+			</div>
+			{children}
+		</div>
+	)
+}
+
+function SentenceBuilder({
+	answer,
+	current,
+	currentAction,
+	currentPhase,
+	feedback,
+	hintsRevealed,
+	spokenFirst,
+	visibleHints,
+	wordBankVisible,
+	wordBankWords,
+	onAddWord,
+	onAnswer,
+	onHearModel,
+	onNext,
+	onRevealHint,
+	onRevealWordBank,
+	onSetSpokenFirst,
+	onSubmit,
+}: {
+	answer: string
+	current: SprintItem
+	currentAction: string
+	currentPhase: string
+	feedback: FeedbackState | null
+	hintsRevealed: number
+	spokenFirst: boolean
+	visibleHints: string[]
+	wordBankVisible: boolean
+	wordBankWords: string[]
+	onAddWord: (word: string) => void
+	onAnswer: (answer: string) => void
+	onHearModel: () => void
+	onNext: () => void
+	onRevealHint: () => void
+	onRevealWordBank: () => void
+	onSetSpokenFirst: (value: boolean) => void
+	onSubmit: (event: FormEvent) => void
+}) {
+	return (
+		<>
+			<div className="quest-meta">
+				<span>
+					<Target size={15} />
+					{current.exercise.phraseFamily}
+				</span>
+				<span>
+					<MessageCircle size={15} />
+					{currentAction}
+				</span>
+				<span>
+					<ShieldCheck size={15} />
+					{sprintPhaseLabels[currentPhase as keyof typeof sprintPhaseLabels]}
+				</span>
+			</div>
+
+			{current.exercise.npcLine && (
+				<div className="npc-line">
+					<span>NPC</span>
+					<p>{current.exercise.npcLine}</p>
+				</div>
+			)}
+
+			<form className="answer-card" onSubmit={onSubmit}>
+				<label htmlFor="answer">Say this in Italian</label>
+				<p className="prompt">{current.exercise.promptEnglish}</p>
+				<div className={spokenFirst ? 'speak-gate done' : 'speak-gate'}>
+					<div>
+						<span>
+							<Mic2 size={16} />
+							Say it first
+						</span>
+						<p>
+							{current.exercise.spokenCue ??
+								'Make a rough spoken attempt before you type. It does not need to be perfect.'}
+						</p>
+					</div>
+					<button
+						className={spokenFirst ? 'btn btn-primary' : 'btn btn-secondary'}
+						type="button"
+						onClick={() => onSetSpokenFirst(true)}>
+						<Mic2 size={18} />
+						{spokenFirst ? 'Spoken' : 'I said it'}
+					</button>
+				</div>
+				<textarea
+					id="answer"
+					value={answer}
+					disabled={Boolean(feedback)}
+					onChange={(event) => onAnswer(event.target.value)}
+					placeholder="Type your Italian sentence..."
+					rows={4}
+				/>
+				{visibleHints.length > 0 && (
+					<div className="hint-stack">
+						{visibleHints.map((hint) => (
+							<div className="hint" key={hint}>
+								<Lightbulb size={15} />
+								{hint}
+							</div>
+						))}
+					</div>
+				)}
+
+				{wordBankVisible && (
+					<div className="word-bank" aria-label="Word bank">
+						{wordBankWords.map((word, wordIndex) => (
+							<button
+								type="button"
+								key={`${word}-${wordIndex}`}
+								onClick={() => onAddWord(word)}>
+								{word}
+							</button>
+						))}
+					</div>
+				)}
+
+				{feedback && (
+					<div
+						className={
+							feedback.result.spellingOnly
+								? 'feedback feedback-spelling'
+								: feedback.result.accepted
+								? 'feedback feedback-good'
+								: feedback.result.communicative
+								? 'feedback feedback-communicative'
+								: 'feedback feedback-repair'
+						}>
+						<strong>{feedback.result.message}</strong>
+						<span className="feedback-note">{feedback.result.shortFeedback}</span>
+						<p>{feedback.model}</p>
+						<div className="feedback-actions">
+							{canTTS() && (
+								<button
+									className="btn btn-secondary"
+									type="button"
+									onClick={onHearModel}>
+									<Volume2 size={18} />
+									Hear model
+								</button>
+							)}
+						</div>
+						{feedback.result.errorTags.length > 0 && (
+							<div className="tag-row">
+								{feedback.result.errorTags.map((tag) => (
+									<span key={tag}>{tag}</span>
+								))}
+							</div>
+						)}
+					</div>
+				)}
+
+				<div className="control-bar">
+					<button
+						className="btn btn-secondary"
+						type="button"
+						disabled={
+							Boolean(feedback) ||
+							hintsRevealed >= current.exercise.hints.length
+						}
+						onClick={onRevealHint}>
+						<Lightbulb size={18} />
+						Hint
+					</button>
+					<button
+						className="btn btn-secondary"
+						type="button"
+						disabled={Boolean(feedback) || wordBankVisible}
+						onClick={onRevealWordBank}>
+						<Layers size={18} />
+						Words
+					</button>
+					{feedback ? (
+						<button className="btn btn-primary" type="button" onClick={onNext}>
+							<ArrowRight size={18} />
+							Next
+						</button>
+					) : (
+						<button className="btn btn-primary" type="submit">
+							<Play size={18} />
+							Check
+						</button>
+					)}
+				</div>
+			</form>
+		</>
+	)
+}
+
+function GuidedVocabularyMatch({
+	item,
+	onUnitComplete,
+	vocabulary,
+}: {
+	item: DailySessionItem
+	onUnitComplete: (success: boolean) => void
+	vocabulary: SceneVocabulary[]
+}) {
+	const targetVocabulary = vocabulary.slice(0, Math.max(item.targetCount, 1))
 	const [selectedItalian, setSelectedItalian] = useState<string | null>(null)
 	const [matchedIds, setMatchedIds] = useState<Set<string>>(new Set())
 	const englishCards = useMemo(
-		() => [...vocabulary].sort(() => Math.random() - 0.5),
-		[vocabulary]
+		() => [...targetVocabulary].sort(() => Math.random() - 0.5),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[item.id]
 	)
 
 	useEffect(() => {
 		setSelectedItalian(null)
 		setMatchedIds(new Set())
-	}, [vocabulary])
+	}, [item.id])
 
-	function chooseEnglish(item: SceneVocabulary) {
+	function chooseEnglish(card: SceneVocabulary) {
 		if (!selectedItalian) return
-		if (selectedItalian === item.id) {
-			setMatchedIds((current) => new Set([...current, item.id]))
+		if (selectedItalian === card.id && !matchedIds.has(card.id)) {
+			setMatchedIds((current) => new Set([...current, card.id]))
 			setSelectedItalian(null)
+			onUnitComplete(true)
 		}
 	}
 
 	return (
 		<div className="answer-card">
-			<label>Scene vocabulary</label>
+			<label>Match Italian to English</label>
 			<div className="match-score">
 				<span>
-					{matchedIds.size} / {vocabulary.length}
+					{Math.min(item.completedCount, item.targetCount)} / {item.targetCount}
 				</span>
 			</div>
 			<div className="match-board">
 				<div className="match-column">
-					{vocabulary.map((item) => (
+					{targetVocabulary.map((card) => (
 						<button
 							type="button"
-							key={item.id}
+							key={card.id}
 							className={
-								matchedIds.has(item.id)
+								matchedIds.has(card.id)
 									? 'match-token matched'
-									: selectedItalian === item.id
+									: selectedItalian === card.id
 									? 'match-token selected'
 									: 'match-token'
 							}
-							disabled={matchedIds.has(item.id)}
-							onClick={() => setSelectedItalian(item.id)}>
-							{item.italian}
+							disabled={matchedIds.has(card.id)}
+							onClick={() => setSelectedItalian(card.id)}>
+							{card.italian}
 						</button>
 					))}
 				</div>
 				<div className="match-column">
-					{englishCards.map((item) => (
+					{englishCards.map((card) => (
 						<button
 							type="button"
-							key={item.id}
+							key={card.id}
 							className={
-								matchedIds.has(item.id) ? 'match-token matched' : 'match-token'
+								matchedIds.has(card.id) ? 'match-token matched' : 'match-token'
 							}
-							disabled={matchedIds.has(item.id)}
-							onClick={() => chooseEnglish(item)}>
-							{item.english}
+							disabled={matchedIds.has(card.id)}
+							onClick={() => chooseEnglish(card)}>
+							{card.english}
 						</button>
 					))}
 				</div>
 			</div>
 			<div className="tag-row">
-				{vocabulary.slice(0, 5).map((item) => (
-					<span key={`${item.id}-pos`}>{item.partOfSpeech}</span>
+				{targetVocabulary.slice(0, 5).map((card) => (
+					<span key={`${card.id}-pos`}>{card.partOfSpeech}</span>
 				))}
 			</div>
 		</div>
 	)
 }
 
-function SceneFlashcards({ vocabulary }: { vocabulary: SceneVocabulary[] }) {
-	const [index, setIndex] = useState(0)
+function GuidedRecallCards({
+	item,
+	onUnitComplete,
+	vocabulary,
+}: {
+	item: DailySessionItem
+	onUnitComplete: (success: boolean) => void
+	vocabulary: SceneVocabulary[]
+}) {
 	const [revealed, setRevealed] = useState(false)
-	const current = vocabulary[index % Math.max(vocabulary.length, 1)]
+	const card = vocabulary[item.completedCount % Math.max(vocabulary.length, 1)]
 
 	useEffect(() => {
-		setIndex(0)
 		setRevealed(false)
-	}, [vocabulary])
+	}, [item.completedCount, item.id])
 
-	if (!current) return null
+	if (!card) return null
 
-	function next() {
-		setIndex((value) => (value + 1) % vocabulary.length)
+	function complete(success: boolean) {
 		setRevealed(false)
+		onUnitComplete(success)
 	}
 
 	return (
 		<div className="answer-card flashcard-mode">
-			<label>Word card</label>
+			<label>Recall aloud</label>
 			<div className="word-card">
-				<span>{current.partOfSpeech}</span>
-				<strong>{current.italian}</strong>
-				{revealed && <p>{current.english}</p>}
+				<span>{card.partOfSpeech}</span>
+				<strong>{card.italian}</strong>
+				{revealed && <p>{card.english}</p>}
 			</div>
 			<div className="control-bar">
 				<button
@@ -663,10 +1004,240 @@ function SceneFlashcards({ vocabulary }: { vocabulary: SceneVocabulary[] }) {
 					<Lightbulb size={18} />
 					Reveal
 				</button>
-				<button className="btn btn-primary" type="button" onClick={next}>
-					<ArrowRight size={18} />
-					Next
+				<button className="btn btn-secondary" type="button" onClick={() => complete(false)}>
+					<RotateCcw size={18} />
+					Review
 				</button>
+				<button className="btn btn-primary" type="button" onClick={() => complete(true)}>
+					<Check size={18} />
+					Knew it
+				</button>
+			</div>
+		</div>
+	)
+}
+
+function DailyRepair({
+	answer,
+	feedback,
+	mistake,
+	onAnswer,
+	onNext,
+	onSubmit,
+}: {
+	answer: string
+	feedback: FeedbackState | null
+	mistake: MistakeItem
+	onAnswer: (value: string) => void
+	onNext: () => void
+	onSubmit: (event: FormEvent) => void
+}) {
+	return (
+		<form className="answer-card" onSubmit={onSubmit}>
+			<label>Repair from memory</label>
+			<p className="prompt">{mistake.promptEnglish}</p>
+			<div className="answer-comparison">
+				<div>
+					<span>Your previous answer</span>
+					<p>{mistake.userAnswer || 'Blank answer'}</p>
+				</div>
+				<div>
+					<span>Model</span>
+					<p>{mistake.correctedItalian}</p>
+				</div>
+			</div>
+			<div className="repair-drills">
+				<span>
+					<Mic2 size={15} />
+					Say aloud, then type
+				</span>
+				<p>{mistake.repairPrompts?.[0] ?? mistake.promptEnglish}</p>
+			</div>
+			<textarea
+				value={answer}
+				disabled={Boolean(feedback)}
+				onChange={(event) => onAnswer(event.target.value)}
+				placeholder="Type the repaired Italian sentence..."
+				rows={3}
+			/>
+			{feedback && (
+				<div
+					className={
+						feedback.result.communicative
+							? 'feedback feedback-good'
+							: 'feedback feedback-repair'
+					}>
+					<strong>{feedback.result.message}</strong>
+					<span className="feedback-note">{feedback.result.shortFeedback}</span>
+					<p>{feedback.model}</p>
+				</div>
+			)}
+			<div className="control-bar">
+				{canTTS() && (
+					<button
+						className="btn btn-secondary"
+						type="button"
+						onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
+						<Volume2 size={18} />
+						Model
+					</button>
+				)}
+				{feedback ? (
+					<button className="btn btn-primary" type="button" onClick={onNext}>
+						<ArrowRight size={18} />
+						Next
+					</button>
+				) : (
+					<button className="btn btn-primary" type="submit">
+						<Play size={18} />
+						Check repair
+					</button>
+				)}
+			</div>
+		</form>
+	)
+}
+
+function TransferActivity({
+	diagnostics,
+	item,
+	loading,
+	onComplete,
+	onRefresh,
+	onReflection,
+	reflection,
+}: {
+	diagnostics: SourceDiagnostics | null | undefined
+	item: SourceItem
+	loading: boolean
+	onComplete: () => void
+	onRefresh: () => void
+	onReflection: (value: string) => void
+	reflection: string
+}) {
+	const video = isVideoItem(item)
+	const youtubeReady = diagnostics?.youtube?.status === 'ok'
+
+	return (
+		<div className="answer-card transfer-card">
+			<label>{video ? 'Watch a short clip' : 'Read one article'}</label>
+			<div className="transfer-media">
+				{video ? (
+					<div className="video-frame">
+						<iframe
+							allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+							allowFullScreen
+							src={item.embedUrl}
+							title={item.title}
+						/>
+					</div>
+				) : (
+					<div className="article-transfer">
+						<Newspaper size={30} />
+						<strong>{item.sourceName}</strong>
+					</div>
+				)}
+			</div>
+			<div className="transfer-copy">
+				<span>{item.sourceName}</span>
+				<h3>{item.title}</h3>
+				<p>{item.prompt}</p>
+				{!youtubeReady && video && (
+					<p className="source-lock-note">Video feed is using the current fallback.</p>
+				)}
+			</div>
+			<textarea
+				value={reflection}
+				onChange={(event) => onReflection(event.target.value)}
+				placeholder="Optional: write one Italian phrase you could say about it..."
+				rows={3}
+			/>
+			<div className="control-bar">
+				<a className="btn btn-secondary" href={item.link} target="_blank" rel="noreferrer">
+					<ExternalLink size={18} />
+					Open
+				</a>
+				<button className="btn btn-secondary" type="button" onClick={onRefresh}>
+					<RotateCcw size={18} />
+					{loading ? 'Refreshing' : 'Refresh'}
+				</button>
+				<button className="btn btn-primary" type="button" onClick={onComplete}>
+					<CheckCircle2 size={18} />
+					Complete transfer
+				</button>
+			</div>
+		</div>
+	)
+}
+
+function CompletionScreen({
+	advice,
+	items,
+	session,
+}: {
+	advice: string[]
+	items: DailySessionItem[]
+	session: DailySession
+}) {
+	return (
+		<div className="completion-screen daily-complete">
+			<div className="completion-badge">
+				<Check size={38} />
+			</div>
+			<p className="eyebrow">Daily Session Complete</p>
+			<h2>Good, you have finished for today.</h2>
+			<div className="completion-summary">
+				<div>
+					<strong>
+						{session.completedCount}/{session.plannedCount}
+					</strong>
+					<span>activities</span>
+				</div>
+				<div>
+					<strong>{session.successCount}</strong>
+					<span>successful</span>
+				</div>
+				<div>
+					<strong>{session.mistakeCount}</strong>
+					<span>repair signals</span>
+				</div>
+				<div>
+					<strong>{formatDuration(session.activeMs)}</strong>
+					<span>active answering</span>
+				</div>
+			</div>
+			<div className="completion-review">
+				<h3>Today&apos;s checklist</h3>
+				{items.map((item) => (
+					<div className="metric-row" key={item.id}>
+						<span>{item.label}</span>
+						<strong>
+							{item.completedCount}/{item.targetCount}
+						</strong>
+					</div>
+				))}
+			</div>
+			<div className="completion-review">
+				<h3>Revise next</h3>
+				{advice.length ? (
+					<div className="tag-row">
+						{advice.map((item) => (
+							<span key={item}>{item}</span>
+						))}
+					</div>
+				) : (
+					<p>Keep the same sentence frames warm tomorrow.</p>
+				)}
+			</div>
+			<div className="action-row">
+				<Link className="btn btn-primary" to="/sources">
+					<BookOpen size={18} />
+					Continue lightly
+				</Link>
+				<Link className="btn btn-secondary" to="/mistakes">
+					<RotateCcw size={18} />
+					Practise mistakes
+				</Link>
 			</div>
 		</div>
 	)
