@@ -48,10 +48,14 @@ export type ExerciseLog = {
 	ts: string
 	outcome: 'again' | 'hard' | 'good' | 'easy'
 	correct: 0 | 1
+	communicative?: 0 | 1
 	msUsed: number
 	hintsUsed: number
 	conceptHintsUsed?: number
 	wordBankUsed?: 0 | 1
+	spokenFirst?: 0 | 1
+	phase?: string
+	action?: string
 	mode?: string
 	answer: string
 }
@@ -66,6 +70,10 @@ export type MistakeItem = {
 	correctedItalian: string
 	tags: string[]
 	explanation: string
+	repairPrompts?: string[]
+	lastRepairAnswer?: string
+	repairStep?: number
+	construction?: string
 	status: 'open' | 'reviewing' | 'repaired'
 	nextDueAt?: string | null
 	createdAt: string

@@ -11,22 +11,30 @@ import {
 } from 'lucide-react'
 import { getFluencySnapshot } from '@/learning/progress'
 import { useAuth } from '@/store/useAuth'
+import { useSettings } from '@/store/useSettings'
+import { getCurriculumStage, roundFocusWeights } from '@/learning/curriculum'
 
 type Snapshot = Awaited<ReturnType<typeof getFluencySnapshot>>
 
 export default function Stats() {
 	const { userId } = useAuth()
+	const { programWeek } = useSettings()
+	const stage = getCurriculumStage(programWeek)
 	const [snapshot, setSnapshot] = useState<Snapshot>({
 		total: 0,
 		correct: 0,
 		accuracy: 0,
+		communicativeAccuracy: 0,
 		averageMs: 0,
 		openMistakes: 0,
 		repaired: 0,
+		spokenFirst: 0,
 		conceptHints: 0,
 		wordBankHints: 0,
 		topMisspellings: [],
 		categoryErrors: [],
+		phraseFamilies: [],
+		phaseCounts: [],
 	})
 
 	useEffect(() => {
@@ -49,6 +57,22 @@ export default function Stats() {
 				<h1>Production dashboard</h1>
 			</div>
 
+			<section className="panel curriculum-summary">
+				<div>
+					<p className="eyebrow">Week {programWeek}</p>
+					<h2>{stage.title}</h2>
+					<p>{stage.goals.join(' - ')}</p>
+				</div>
+				<div className="round-mix">
+					{Object.entries(roundFocusWeights).map(([focus, weight]) => (
+						<span key={focus}>
+							<strong>{weight}%</strong>
+							{focus}
+						</span>
+					))}
+				</div>
+			</section>
+
 			<div className="stat-grid">
 				<StatTile
 					icon={<Target size={22} />}
@@ -57,8 +81,8 @@ export default function Stats() {
 				/>
 				<StatTile
 					icon={<Gauge size={22} />}
-					label="First-pass accuracy"
-					value={`${snapshot.accuracy}%`}
+					label="Communicative attempts"
+					value={`${snapshot.communicativeAccuracy}%`}
 				/>
 				<StatTile
 					icon={<Activity size={22} />}
@@ -69,6 +93,11 @@ export default function Stats() {
 					icon={<RotateCcw size={22} />}
 					label="Open repairs"
 					value={snapshot.openMistakes.toString()}
+				/>
+				<StatTile
+					icon={<Sparkles size={22} />}
+					label="Said aloud first"
+					value={snapshot.spokenFirst.toString()}
 				/>
 				<StatTile
 					icon={<Lightbulb size={22} />}
@@ -87,12 +116,12 @@ export default function Stats() {
 					<Sparkles size={20} />
 					<h2>Narrative progress</h2>
 				</div>
-				<div className="fluency-track">
-					<div className="track-step complete">Cafe opener</div>
-					<div className={snapshot.total >= 4 ? 'track-step complete' : 'track-step'}>
+					<div className="fluency-track">
+						<div className="track-step complete">Cafe opener</div>
+					<div className={snapshot.spokenFirst >= 4 ? 'track-step complete' : 'track-step'}>
 						Family table
 					</div>
-					<div className={snapshot.total >= 10 ? 'track-step complete' : 'track-step'}>
+					<div className={snapshot.communicativeAccuracy >= 70 ? 'track-step complete' : 'track-step'}>
 						Bookshop chat
 					</div>
 					<div className={snapshot.repaired >= 3 ? 'track-step complete' : 'track-step'}>
@@ -149,6 +178,28 @@ export default function Stats() {
 					</div>
 				</section>
 			</div>
+
+			<section className="panel">
+				<div className="panel-title">
+					<Layers size={20} />
+					<h2>Phrase mastery</h2>
+				</div>
+				<div className="metric-list">
+					{snapshot.phraseFamilies.length ? (
+						snapshot.phraseFamilies.map((item) => (
+							<div className="metric-row" key={item.family}>
+								<span>{item.family}</span>
+								<strong>{item.rate}%</strong>
+							</div>
+						))
+					) : (
+						<div className="metric-row muted-row">
+							<span>No phrase-family data yet</span>
+							<strong>0</strong>
+						</div>
+					)}
+				</div>
+			</section>
 		</div>
 	)
 }

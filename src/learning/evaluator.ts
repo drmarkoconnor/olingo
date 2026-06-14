@@ -4,13 +4,19 @@ export type ExerciseOutcome = 'again' | 'hard' | 'good' | 'easy'
 
 export type EvaluationResult = {
 	accepted: boolean
+	communicative: boolean
 	close: boolean
 	spellingOnly: boolean
 	outcome: ExerciseOutcome
 	normalisedAnswer: string
 	message: string
+	shortFeedback: string
+	correctedItalian: string
+	meaning: string
 	errorTags: string[]
 	spellingIssues: { answer: string; correction: string }[]
+	repairPrompts: string[]
+	confidence: number
 }
 
 const accentMap: Record<string, string> = {
@@ -38,6 +44,20 @@ function tokenOverlap(answer: string, target: string) {
 	const answerTokens = new Set(answer.split(' ').filter(Boolean))
 	const targetTokens = target.split(' ').filter(Boolean)
 	if (!targetTokens.length) return 0
+	const hits = targetTokens.filter((token) => answerTokens.has(token)).length
+	return hits / targetTokens.length
+}
+
+function contentTokenOverlap(answer: string, target: string) {
+	const answerTokens = new Set(
+		answer
+			.split(' ')
+			.filter((token) => token.length > 2 && !grammarShortWords.has(token))
+	)
+	const targetTokens = target
+		.split(' ')
+		.filter((token) => token.length > 2 && !grammarShortWords.has(token))
+	if (!targetTokens.length) return tokenOverlap(answer, target)
 	const hits = targetTokens.filter((token) => answerTokens.has(token)).length
 	return hits / targetTokens.length
 }
@@ -125,53 +145,96 @@ export function evaluateAnswer(
 	)
 	const target = normaliseItalian(exercise.targetItalian)
 	const overlap = tokenOverlap(normalisedAnswer, target)
+	const contentOverlap = contentTokenOverlap(normalisedAnswer, target)
 	const spellingIssues = accepted ? [] : findSpellingIssues(normalisedAnswer, target)
 	const spellingOnly = spellingIssues.length > 0 && overlap >= 0.82
-	const close = !accepted && overlap >= 0.72
+	const close = !accepted && (overlap >= 0.72 || contentOverlap >= 0.72)
+	const communicative = accepted || spellingOnly || close || contentOverlap >= 0.62
 	const fastEnough = msUsed < 25000
 	const noHints = hintsUsed === 0
+	const repairPrompts = exercise.repairPrompts?.length
+		? exercise.repairPrompts
+		: [exercise.promptEnglish]
+	const base = {
+		correctedItalian: exercise.targetItalian,
+		meaning: exercise.promptEnglish,
+		repairPrompts,
+	}
 
 	if (spellingOnly) {
 		return {
 			accepted: true,
+			communicative: true,
 			close: true,
 			spellingOnly,
 			outcome: 'hard',
 			normalisedAnswer,
 			message: 'Accepted with spelling repair.',
+			shortFeedback: 'Good enough to say. Fix the spelling next.',
 			errorTags: ['spelling'],
 			spellingIssues,
+			confidence: 0.86,
+			...base,
 		}
 	}
 
 	if (accepted && fastEnough && noHints) {
 		return {
 			accepted,
+			communicative: true,
 			close,
 			spellingOnly,
 			outcome: 'easy',
 			normalisedAnswer,
 			message: 'Fluent and accurate.',
+			shortFeedback: 'Fast, clear, and accurate.',
 			errorTags: [],
 			spellingIssues,
+			confidence: 0.98,
+			...base,
 		}
 	}
 
 	if (accepted) {
 		return {
 			accepted,
+			communicative: true,
 			close,
 			spellingOnly,
 			outcome: hintsUsed > 0 || msUsed > 45000 ? 'hard' : 'good',
 			normalisedAnswer,
 			message: hintsUsed > 0 ? 'Correct with support.' : 'Correct.',
+			shortFeedback:
+				hintsUsed > 0 || msUsed > 45000
+					? 'Accurate. Now make it easier to retrieve.'
+					: 'Accurate and usable.',
 			errorTags: [],
 			spellingIssues,
+			confidence: hintsUsed > 0 ? 0.9 : 0.95,
+			...base,
+		}
+	}
+
+	if (communicative) {
+		return {
+			accepted,
+			communicative,
+			close: true,
+			spellingOnly,
+			outcome: 'hard',
+			normalisedAnswer,
+			message: 'Communicative. Polish it once.',
+			shortFeedback: 'The idea would probably land. Use the model to tighten it.',
+			errorTags: exercise.tags.slice(0, 2),
+			spellingIssues,
+			confidence: close ? 0.78 : 0.68,
+			...base,
 		}
 	}
 
 	return {
 		accepted,
+		communicative: false,
 		close,
 		spellingOnly,
 		outcome: 'again',
@@ -179,8 +242,11 @@ export function evaluateAnswer(
 		message: close
 			? 'Very close. Compare the model and repair it once.'
 			: 'Not yet. Use the model sentence, then it will return in Mistake Gym.',
+		shortFeedback: 'Not usable yet, but this is exactly what repair practice is for.',
 		errorTags: exercise.tags,
 		spellingIssues,
+		confidence: 0.42,
+		...base,
 	}
 }
 

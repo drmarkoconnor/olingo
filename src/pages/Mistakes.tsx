@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react'
-import { Check, RotateCcw, Tags } from 'lucide-react'
+import { FormEvent, useEffect, useState } from 'react'
+import { Check, Mic2, Play, Tags, Volume2 } from 'lucide-react'
 import { db, type MistakeItem } from '@/storage/db'
 import { useAuth } from '@/store/useAuth'
+import { submitMistakeRepair } from '@/learning/progress'
+import type { EvaluationResult } from '@/learning/evaluator'
+import { canTTS, speak } from '@/lib/tts'
 
 export default function Mistakes() {
 	const { userId } = useAuth()
 	const [mistakes, setMistakes] = useState<MistakeItem[]>([])
+	const [answers, setAnswers] = useState<Record<string, string>>({})
+	const [feedback, setFeedback] = useState<Record<string, EvaluationResult>>({})
+	const [startedAt, setStartedAt] = useState<Record<string, number>>({})
 
 	useEffect(() => {
 		load()
@@ -21,13 +27,28 @@ export default function Mistakes() {
 		setMistakes(rows)
 	}
 
-	async function markRepaired(mistake: MistakeItem) {
-		await db.mistakes.put({
-			...mistake,
-			status: 'repaired',
-			lastReviewedAt: new Date().toISOString(),
+	async function repair(event: FormEvent, mistake: MistakeItem) {
+		event.preventDefault()
+		const answer = answers[mistake.id]?.trim()
+		if (!answer || mistake.status === 'repaired') return
+		const msUsed = Date.now() - (startedAt[mistake.id] ?? Date.now())
+		const result = await submitMistakeRepair({
+			userId,
+			mistake,
+			answer,
+			msUsed,
 		})
+		setFeedback((current) => ({ ...current, [mistake.id]: result.result }))
+		setStartedAt((current) => ({ ...current, [mistake.id]: Date.now() }))
 		await load()
+	}
+
+	function updateAnswer(mistakeId: string, value: string) {
+		setAnswers((current) => ({ ...current, [mistakeId]: value }))
+		setStartedAt((current) => ({
+			...current,
+			[mistakeId]: current[mistakeId] ?? Date.now(),
+		}))
 	}
 
 	return (
@@ -76,14 +97,53 @@ export default function Mistakes() {
 									<span key={tag}>{tag}</span>
 								))}
 							</div>
-							<button
-								className="btn btn-secondary"
-								type="button"
-								disabled={mistake.status === 'repaired'}
-								onClick={() => markRepaired(mistake)}>
-								<RotateCcw size={18} />
-								Mark repaired
-							</button>
+							<div className="repair-drills">
+								<span>
+									<Mic2 size={15} />
+									Say aloud, then type
+								</span>
+								<p>{mistake.repairPrompts?.[0] ?? mistake.promptEnglish}</p>
+							</div>
+							<form className="repair-form" onSubmit={(event) => repair(event, mistake)}>
+								<textarea
+									value={answers[mistake.id] ?? ''}
+									disabled={mistake.status === 'repaired'}
+									onChange={(event) => updateAnswer(mistake.id, event.target.value)}
+									placeholder="Type the repaired Italian sentence..."
+									rows={3}
+								/>
+								<div className="control-bar">
+									{canTTS() && (
+										<button
+											className="btn btn-secondary"
+											type="button"
+											onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
+											<Volume2 size={18} />
+											Model
+										</button>
+									)}
+									<button
+										className="btn btn-primary"
+										type="submit"
+										disabled={mistake.status === 'repaired'}>
+										<Play size={18} />
+										Check repair
+									</button>
+								</div>
+							</form>
+							{feedback[mistake.id] && (
+								<div
+									className={
+										feedback[mistake.id].communicative
+											? 'feedback feedback-good'
+											: 'feedback feedback-repair'
+									}>
+									<strong>{feedback[mistake.id].message}</strong>
+									<span className="feedback-note">
+										{feedback[mistake.id].shortFeedback}
+									</span>
+								</div>
+							)}
 						</article>
 					))}
 				</div>

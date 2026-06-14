@@ -1,3 +1,5 @@
+import { getStore } from '@netlify/blobs'
+
 const feeds = [
 	{
 		sourceName: 'ANSA Cultura',
@@ -15,6 +17,9 @@ const feeds = [
 		url: 'https://www.ansa.it/sito/notizie/topnews/topnews_rss.xml',
 	},
 ]
+
+const cacheKey = 'sources/latest'
+const cacheTtlMs = 30 * 60 * 1000
 
 declare const Netlify:
 	| {
@@ -199,13 +204,81 @@ async function readYouTube() {
 	}
 }
 
+type SourcesResponse = {
+	items: Array<{
+		id: string
+		sourceName: string
+		title: string
+		link: string
+		topic: string
+		summary: string
+		publishedAt: string
+		prompt: string
+		thumbnailUrl?: string
+		embedUrl?: string
+	}>
+	diagnostics: {
+		youtube: {
+			configured: boolean
+			status: string
+			count: number
+			error: string | null
+			keyShape: {
+				present: boolean
+				length: number
+				trimmedLength: number
+				startsWithAIza: boolean
+				hasWhitespace: boolean
+			}
+		}
+		rss: {
+			count: number
+		}
+		cache?: {
+			hit: boolean
+		}
+	}
+	fetchedAt: string
+}
+
+async function readCachedSources() {
+	try {
+		const store = getStore({ name: 'content-cache' })
+		const cached = (await store.get(cacheKey, { type: 'json' })) as
+			| SourcesResponse
+			| null
+		if (!cached?.fetchedAt) return null
+		const age = Date.now() - new Date(cached.fetchedAt).getTime()
+		if (age > cacheTtlMs) return null
+		return {
+			...cached,
+			diagnostics: {
+				...cached.diagnostics,
+				cache: { hit: true },
+			},
+		}
+	} catch {
+		return null
+	}
+}
+
+async function writeCachedSources(payload: SourcesResponse) {
+	try {
+		const store = getStore({ name: 'content-cache' })
+		await store.setJSON(cacheKey, payload)
+	} catch {}
+}
+
 export default async () => {
+	const cached = await readCachedSources()
+	if (cached) return Response.json(cached)
+
 	const [youtube, ...feedResults] = await Promise.all([
 		readYouTube(),
 		...feeds.map(readFeed),
 	])
 	const rssItems = feedResults.flat()
-	return Response.json({
+	const payload: SourcesResponse = {
 		items: [...youtube.items, ...rssItems].slice(0, 18),
 		diagnostics: {
 			youtube: {
@@ -218,7 +291,10 @@ export default async () => {
 			rss: {
 				count: rssItems.length,
 			},
+			cache: { hit: false },
 		},
 		fetchedAt: new Date().toISOString(),
-	})
+	}
+	await writeCachedSources(payload)
+	return Response.json(payload)
 }

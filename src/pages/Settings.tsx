@@ -2,6 +2,7 @@ import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
 import { useSync } from '@/store/useSync'
 import { hasSupabase } from '@/lib/supabase'
+import { getCurriculumStage } from '@/learning/curriculum'
 
 export default function Settings() {
 	const {
@@ -10,15 +11,18 @@ export default function Settings() {
 		tts,
 		targetLevel,
 		sentenceLength,
+		programWeek,
 		setDailyGoal,
 		setSound,
 		setTTS,
 		setTargetLevel,
 		setSentenceLength,
+		setProgramWeek,
 	} = useSettings()
 	const { userId, email, signInWithGoogle, signOut } = useAuth()
 	const { syncing, lastSyncAt, error, syncAll } = useSync()
 	const supaEnabled = hasSupabase()
+	const stage = getCurriculumStage(programWeek)
 	return (
 		<div>
 			<h2>Settings</h2>
@@ -63,6 +67,19 @@ export default function Settings() {
 					value={dailyGoal}
 					onChange={(e) => setDailyGoal(parseInt(e.target.value || '0'))}
 				/>
+			</div>
+			<div className="tile">
+				<label>Program week</label>
+				<input
+					type="number"
+					min={1}
+					max={24}
+					value={programWeek}
+					onChange={(e) => setProgramWeek(parseInt(e.target.value || '1'))}
+				/>
+				<div className="settings-note">
+					Week {stage.weeks[0]}-{stage.weeks[1]}: {stage.title}
+				</div>
 			</div>
 			<div className="tile">
 				<label>Level</label>

@@ -6,6 +6,8 @@ import {
 	type ItalianSource,
 	type SourceItem,
 } from '@/learning/sources'
+import { newsUnlockWeek, sourceContentUnlocked } from '@/learning/curriculum'
+import { useSettings } from '@/store/useSettings'
 
 type SourceDiagnostics = {
 	youtube?: {
@@ -19,13 +21,31 @@ type SourceDiagnostics = {
 	}
 }
 
+type GeneratedPack = {
+	id: string
+	title: string
+	level: string
+	sourceName: string
+	exercises: Array<{
+		promptEnglish: string
+		targetItalian: string
+		phase: string
+		action: string
+	}>
+	cached?: boolean
+}
+
 export default function Sources() {
+	const { programWeek } = useSettings()
 	const [items, setItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [loading, setLoading] = useState(false)
+	const [packLoading, setPackLoading] = useState(false)
 	const [activePrompt, setActivePrompt] = useState<SourceItem>(fallbackSourceItems[0])
 	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>()
+	const [generatedPack, setGeneratedPack] = useState<GeneratedPack | null>(null)
 	const videoItems = items.filter(isVideoItem)
 	const articleItems = items.filter((item) => !isVideoItem(item))
+	const sourcesUnlocked = sourceContentUnlocked(programWeek)
 
 	async function loadSources() {
 		setLoading(true)
@@ -54,6 +74,49 @@ export default function Sources() {
 		loadSources()
 	}, [])
 
+	async function generatePack() {
+		if (!sourcesUnlocked) return
+		setPackLoading(true)
+		try {
+			const response = await fetch('/api/generate-content-pack', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sourceItem: activePrompt,
+					level: 'B1',
+					programWeek,
+				}),
+			})
+			if (!response.ok) throw new Error('pack unavailable')
+			const data = (await response.json()) as GeneratedPack
+			setGeneratedPack(data)
+		} catch {
+			setGeneratedPack({
+				id: `fallback-${activePrompt.id}`,
+				title: activePrompt.title,
+				level: 'B1',
+				sourceName: activePrompt.sourceName,
+				exercises: [
+					{
+						promptEnglish: 'I read this news and it seems interesting.',
+						targetItalian: 'Ho letto questa notizia e mi sembra interessante.',
+						phase: 'produce',
+						action: 'Summarise',
+					},
+					{
+						promptEnglish: 'What do you think about it?',
+						targetItalian: 'Che cosa ne pensi?',
+						phase: 'speak',
+						action: 'Ask view',
+					},
+				],
+				cached: false,
+			})
+		} finally {
+			setPackLoading(false)
+		}
+	}
+
 	return (
 		<div className="page-stack">
 			<div className="page-heading">
@@ -75,9 +138,51 @@ export default function Sources() {
 							<RefreshCw size={18} />
 							{loading ? 'Loading' : 'Refresh'}
 						</button>
+						<button
+							className="btn btn-secondary"
+							type="button"
+							disabled={!sourcesUnlocked || packLoading}
+							onClick={generatePack}>
+							<Play size={18} />
+							{packLoading
+								? 'Making pack'
+								: sourcesUnlocked
+								? 'Make drills'
+								: `Unlocks week ${newsUnlockWeek}`}
+						</button>
 					</div>
+					{!sourcesUnlocked && (
+						<p className="source-lock-note">
+							Current topics become drills after the everyday and family base is
+							stronger.
+						</p>
+					)}
 				</div>
 			</section>
+
+			{generatedPack && (
+				<section className="source-panel generated-pack-panel">
+					<div className="source-panel-header">
+						<div>
+							<p className="eyebrow">{generatedPack.sourceName}</p>
+							<h2>{generatedPack.cached ? 'Cached drill pack' : 'Drill pack'}</h2>
+						</div>
+						<span>{generatedPack.exercises.length} production drills</span>
+					</div>
+					<div className="article-choice-grid">
+						{generatedPack.exercises.map((exercise, index) => (
+							<article className="article-choice-card" key={`${exercise.targetItalian}-${index}`}>
+								<div className="article-meta">
+									<span>{exercise.phase}</span>
+									<small>{exercise.action}</small>
+								</div>
+								<strong>{exercise.promptEnglish}</strong>
+								<p>{exercise.targetItalian}</p>
+							</article>
+						))}
+					</div>
+				</section>
+			)}
 
 			<section className="source-panel">
 				<div className="source-panel-header">

@@ -5,7 +5,7 @@ import App from '@/App'
 import './styles.css'
 import { useAuth } from '@/store/useAuth'
 
-if ('serviceWorker' in navigator) {
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 	window.addEventListener('load', () => {
 		navigator.serviceWorker.register('/sw.js').catch(console.error)
 	})
@@ -25,4 +25,3 @@ root.render(
 		</BrowserRouter>
 	</React.StrictMode>
 )
-

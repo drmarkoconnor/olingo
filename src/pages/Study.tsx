@@ -8,18 +8,26 @@ import {
 	Lightbulb,
 	MapPin,
 	MessageCircle,
+	Mic2,
 	Play,
 	RotateCcw,
+	ShieldCheck,
 	Shuffle,
 	Sparkles,
 	Target,
+	Volume2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
+	getExerciseAction,
+	getExercisePhase,
 	getScene,
 	getVocabularyForScene,
 	scenes,
+	sprintPhaseLabels,
+	sprintPhaseOrder,
 	type SceneVocabulary,
+	type SprintPhase,
 } from '@/learning/content'
 import {
 	loadDailySprint,
@@ -29,6 +37,8 @@ import {
 import type { EvaluationResult } from '@/learning/evaluator'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
+import { canTTS, speak } from '@/lib/tts'
+import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
 
 type FeedbackState = {
 	result: EvaluationResult
@@ -44,6 +54,8 @@ function shuffleWords(words: string[]) {
 export default function Study() {
 	const { userId } = useAuth()
 	const {
+		dailyGoal,
+		programWeek,
 		targetLevel,
 		sentenceLength,
 		setTargetLevel,
@@ -62,11 +74,18 @@ export default function Study() {
 	const [completed, setCompleted] = useState(0)
 	const [sceneAction, setSceneAction] = useState('Ask opinion')
 	const [mode, setMode] = useState<PracticeMode>('sentence')
+	const [spokenFirst, setSpokenFirst] = useState(false)
 
 	useEffect(() => {
 		let mounted = true
 		setLoading(true)
-		loadDailySprint(userId, 8, { targetLevel, sentenceLength })
+		const sprintLimit = Math.max(8, Math.min(18, Math.round(dailyGoal / 2)))
+		loadDailySprint(userId, sprintLimit, {
+			targetLevel,
+			sentenceLength,
+			sceneAction,
+			programWeek,
+		})
 			.then((items) => {
 				if (!mounted) return
 				setQueue(items)
@@ -74,21 +93,34 @@ export default function Study() {
 				setStartedAt(Date.now())
 				setFeedback(null)
 				setCompleted(0)
+				setSpokenFirst(false)
 			})
 			.finally(() => mounted && setLoading(false))
 		return () => {
 			mounted = false
 		}
-	}, [sentenceLength, targetLevel, userId])
+	}, [dailyGoal, programWeek, sceneAction, sentenceLength, targetLevel, userId])
 
 	const current = queue[index]
 	const scene = useMemo(
 		() => (current ? getScene(current.exercise.sceneId) : scenes[0]),
 		[current]
 	)
+	const currentPhase: SprintPhase = current
+		? current.focusPhase ?? getExercisePhase(current.exercise)
+		: 'warmup'
+	const currentAction = current ? getExerciseAction(current.exercise) : sceneAction
 	const progress = queue.length ? Math.round((completed / queue.length) * 100) : 0
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
 	const vocabulary = useMemo(() => getVocabularyForScene(scene.id), [scene.id])
+	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
+	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
+
+	useEffect(() => {
+		if (!scene.actions.includes(sceneAction)) {
+			setSceneAction(scene.actions[0])
+		}
+	}, [scene.actions, sceneAction])
 
 	useEffect(() => {
 		if (!current) return
@@ -102,6 +134,7 @@ export default function Study() {
 		)
 		setWordBankVisible(false)
 		setWordBankUsed(false)
+		setSpokenFirst(false)
 	}, [current?.exercise.id])
 
 	async function handleSubmit(event: FormEvent) {
@@ -115,6 +148,7 @@ export default function Study() {
 			hintsUsed: hintsRevealed + (wordBankUsed ? 1 : 0),
 			conceptHintsUsed: hintsRevealed,
 			wordBankUsed,
+			spokenFirst,
 			mode: 'sentence',
 			msUsed,
 		})
@@ -131,6 +165,7 @@ export default function Study() {
 		setHintsRevealed(0)
 		setWordBankVisible(false)
 		setWordBankUsed(false)
+		setSpokenFirst(false)
 		setStartedAt(Date.now())
 		setFeedback(null)
 	}
@@ -150,6 +185,11 @@ export default function Study() {
 	function addWord(word: string) {
 		if (feedback) return
 		setAnswer((value) => `${value}${value.trim() ? ' ' : ''}${word}`)
+	}
+
+	function hearModel() {
+		if (!current || !canTTS()) return
+		speak(current.exercise.targetItalian, 'it-IT')
 	}
 
 	if (loading) {
@@ -237,7 +277,9 @@ export default function Study() {
 			<section className="sprint-panel">
 				<div className="sprint-header">
 					<div>
-						<p className="eyebrow">15 minute sprint</p>
+						<p className="eyebrow">
+							Week {programWeek} - {dailyGoal} minute program
+						</p>
 						<h1>Build the sentence quickly</h1>
 					</div>
 					<div
@@ -246,6 +288,23 @@ export default function Study() {
 						aria-label={`${progress}% complete`}>
 						<span>{progress}%</span>
 					</div>
+				</div>
+
+				<div className="curriculum-card">
+					<div>
+						<span>Current focus</span>
+						<strong>{stage.title}</strong>
+					</div>
+					<p>{stage.goals.slice(0, 3).join(' - ')}</p>
+				</div>
+
+				<div className="session-plan" aria-label="Daily session plan">
+					{sessionPlan.map((item) => (
+						<div key={item.id}>
+							<strong>{item.minutes}m</strong>
+							<span>{item.label}</span>
+						</div>
+					))}
 				</div>
 
 				<div className="mode-row" aria-label="Practice mode">
@@ -272,6 +331,17 @@ export default function Study() {
 						<BookOpen size={18} />
 						Cards
 					</button>
+				</div>
+
+				<div className="sprint-steps" aria-label="Daily sprint phases">
+					{sprintPhaseOrder.map((phase) => (
+						<div
+							className={phase === currentPhase ? 'sprint-step active' : 'sprint-step'}
+							key={phase}>
+							<span>{sprintPhaseOrder.indexOf(phase) + 1}</span>
+							<strong>{sprintPhaseLabels[phase]}</strong>
+						</div>
+					))}
 				</div>
 
 				<div className="level-row">
@@ -310,7 +380,11 @@ export default function Study() {
 					</span>
 					<span>
 						<MessageCircle size={15} />
-						{sceneAction}
+						{currentAction}
+					</span>
+					<span>
+						<ShieldCheck size={15} />
+						{current.sourceMistakeId ? 'Due repair' : sprintPhaseLabels[currentPhase]}
 					</span>
 				</div>
 
@@ -329,6 +403,25 @@ export default function Study() {
 				<form className="answer-card" onSubmit={handleSubmit}>
 					<label htmlFor="answer">Say this in Italian</label>
 					<p className="prompt">{current.exercise.promptEnglish}</p>
+					<div className={spokenFirst ? 'speak-gate done' : 'speak-gate'}>
+						<div>
+							<span>
+								<Mic2 size={16} />
+								Say it first
+							</span>
+							<p>
+								{current.exercise.spokenCue ??
+									'Make a rough spoken attempt before you type. It does not need to be perfect.'}
+							</p>
+						</div>
+						<button
+							className={spokenFirst ? 'btn btn-primary' : 'btn btn-secondary'}
+							type="button"
+							onClick={() => setSpokenFirst(true)}>
+							<Mic2 size={18} />
+							{spokenFirst ? 'Spoken' : 'I said it'}
+						</button>
+					</div>
 					<textarea
 						id="answer"
 						value={answer}
@@ -368,10 +461,26 @@ export default function Study() {
 									? 'feedback feedback-spelling'
 									: feedback.result.accepted
 									? 'feedback feedback-good'
+									: feedback.result.communicative
+									? 'feedback feedback-communicative'
 									: 'feedback feedback-repair'
 							}>
 							<strong>{feedback.result.message}</strong>
+							<span className="feedback-note">
+								{feedback.result.shortFeedback}
+							</span>
 							<p>{feedback.model}</p>
+							<div className="feedback-actions">
+								{canTTS() && (
+									<button
+										className="btn btn-secondary"
+										type="button"
+										onClick={hearModel}>
+										<Volume2 size={18} />
+										Hear model
+									</button>
+								)}
+							</div>
 							{feedback.result.spellingIssues.length > 0 && (
 								<div className="tag-row">
 										{feedback.result.spellingIssues.map((issue) => (
@@ -385,6 +494,14 @@ export default function Study() {
 								<div className="tag-row">
 									{feedback.result.errorTags.map((tag) => (
 										<span key={tag}>{tag}</span>
+									))}
+								</div>
+							)}
+							{feedback.result.repairPrompts.length > 0 && (
+								<div className="repair-prompt-list">
+									<strong>Next repair</strong>
+									{feedback.result.repairPrompts.slice(0, 2).map((prompt) => (
+										<span key={prompt}>{prompt}</span>
 									))}
 								</div>
 							)}
