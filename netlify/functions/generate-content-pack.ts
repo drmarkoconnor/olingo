@@ -1,4 +1,5 @@
 import { getStore } from '@netlify/blobs'
+import { authFailed, requireUser } from './_shared/auth'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
 type SourceItem = {
@@ -60,6 +61,9 @@ function makePack(source: SourceItem, level: string) {
 
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
+	const auth = await requireUser()
+	if (authFailed(auth)) return auth.response
+
 	const body = await readJson<Body>(req)
 	if (!body?.sourceItem) return json({ error: 'Missing source item' }, { status: 400 })
 	if ((body.programWeek ?? 1) < 17) {

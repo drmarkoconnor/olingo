@@ -1,7 +1,5 @@
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import { useSync } from '@/store/useSync'
-import { hasSupabase } from '@/lib/supabase'
 import { getCurriculumStage } from '@/learning/curriculum'
 
 export default function Settings() {
@@ -19,46 +17,38 @@ export default function Settings() {
 		setSentenceLength,
 		setProgramWeek,
 	} = useSettings()
-	const { userId, email, signInWithGoogle, signOut } = useAuth()
-	const { syncing, lastSyncAt, error, syncAll } = useSync()
-	const supaEnabled = hasSupabase()
+	const { userId, email, localMode, name, signOut } = useAuth()
 	const stage = getCurriculumStage(programWeek)
 	return (
 		<div>
 			<h2>Settings</h2>
 
-			{supaEnabled && (
-				<div className="tile">
-					<div
-						style={{
-							display: 'flex',
-							justifyContent: 'space-between',
-							alignItems: 'center',
-						}}>
-						<div>
-							<div style={{ fontWeight: 600 }}>Account</div>
-							<div style={{ fontSize: 12, color: 'var(--muted)' }}>
-								{email ? email : `Offline user: ${userId.slice(0, 8)}…`}
-							</div>
+			<div className="tile">
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'space-between',
+						alignItems: 'center',
+						gap: 16,
+					}}>
+					<div>
+						<div style={{ fontWeight: 600 }}>Account</div>
+						<div style={{ fontSize: 12, color: 'var(--muted)' }}>
+							{localMode
+								? `Local browser profile: ${userId.slice(0, 12)}`
+								: email ?? name ?? userId}
 						</div>
-						{email ? (
-							<button
-								className="btn btn-muted"
-								onClick={signOut}
-								style={{ flex: 'none' }}>
-								Sign out
-							</button>
-						) : (
-							<button
-								className="btn btn-primary"
-								onClick={signInWithGoogle}
-								style={{ flex: 'none' }}>
-								Sign in with Google
-							</button>
-						)}
 					</div>
+					{!localMode && (
+						<button
+							className="btn btn-muted"
+							onClick={signOut}
+							style={{ flex: 'none' }}>
+							Sign out
+						</button>
+					)}
 				</div>
-			)}
+			</div>
 
 			<div className="tile">
 				<label>Daily goal (minutes)</label>
@@ -130,34 +120,13 @@ export default function Settings() {
 				</label>
 			</div>
 
-			{supaEnabled && (
-				<div className="tile">
-					<div
-						style={{
-							display: 'flex',
-							justifyContent: 'space-between',
-							alignItems: 'center',
-						}}>
-						<div>
-							<div style={{ fontWeight: 600 }}>Cloud sync</div>
-							<div style={{ fontSize: 12, color: 'var(--muted)' }}>
-								Last sync:{' '}
-								{lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Never'}
-							</div>
-							{error && (
-								<div style={{ color: 'var(--red)', fontSize: 12 }}>{error}</div>
-							)}
-						</div>
-						<button
-							className="btn btn-primary"
-							disabled={syncing}
-							onClick={syncAll}
-							style={{ flex: 'none' }}>
-							{syncing ? 'Syncing…' : 'Sync now'}
-						</button>
-					</div>
+			<div className="tile">
+				<div style={{ fontWeight: 600 }}>Family data</div>
+				<div style={{ fontSize: 12, color: 'var(--muted)' }}>
+					Progress is keyed to this account in the browser. Server backups use
+					the same Netlify Identity user id.
 				</div>
-			)}
+			</div>
 		</div>
 	)
 }

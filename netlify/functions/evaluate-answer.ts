@@ -1,4 +1,5 @@
 import { getStore } from '@netlify/blobs'
+import { authFailed, requireUser } from './_shared/auth'
 import { deterministicEvaluation } from './_shared/evaluate'
 import { evaluateWithOpenAI } from './_shared/openai'
 import { json, methodNotAllowed, readJson } from './_shared/http'
@@ -22,6 +23,9 @@ type Body = {
 
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
+	const auth = await requireUser()
+	if (authFailed(auth)) return auth.response
+
 	const body = await readJson<Body>(req)
 	if (!body?.exercise || typeof body.answer !== 'string') {
 		return json({ error: 'Missing exercise or answer' }, { status: 400 })
@@ -38,8 +42,11 @@ export default async (req: Request) => {
 
 	if (!result.accepted) {
 		const store = getStore({ name: 'mistake-ledger' })
-		const key = `${new Date().toISOString()}-${body.exercise.id ?? 'exercise'}`
+		const key = `users/${encodeURIComponent(auth.user.id)}/${new Date().toISOString()}-${
+			body.exercise.id ?? 'exercise'
+		}`
 		await store.setJSON(key, {
+			userId: auth.user.id,
 			exerciseId: body.exercise.id,
 			answer: body.answer,
 			result,

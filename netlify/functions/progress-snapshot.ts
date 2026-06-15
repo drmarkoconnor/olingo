@@ -1,8 +1,8 @@
 import { getStore } from '@netlify/blobs'
+import { authFailed, requireUser } from './_shared/auth'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
 type Body = {
-	userId?: string
 	snapshot?: unknown
 }
 
@@ -11,27 +11,28 @@ function keyFor(userId: string) {
 }
 
 export default async (req: Request) => {
-	const url = new URL(req.url)
-	const userId = url.searchParams.get('userId')
+	const auth = await requireUser()
+	if (authFailed(auth)) return auth.response
+
+	const userId = auth.user.id
 	const store = getStore({ name: 'progress-snapshots', consistency: 'strong' })
 
 	if (req.method === 'GET') {
-		if (!userId) return json({ error: 'Missing userId' }, { status: 400 })
 		const snapshot = await store.get(keyFor(userId), { type: 'json' })
 		return json({ snapshot: snapshot ?? null })
 	}
 
 	if (req.method === 'POST') {
 		const body = await readJson<Body>(req)
-		if (!body?.userId || !body.snapshot) {
-			return json({ error: 'Missing userId or snapshot' }, { status: 400 })
+		if (!body || typeof body.snapshot === 'undefined') {
+			return json({ error: 'Missing snapshot' }, { status: 400 })
 		}
 		const payload = {
-			userId: body.userId,
+			userId,
 			snapshot: body.snapshot,
 			updatedAt: new Date().toISOString(),
 		}
-		await store.setJSON(keyFor(body.userId), payload)
+		await store.setJSON(keyFor(userId), payload)
 		return json(payload)
 	}
 

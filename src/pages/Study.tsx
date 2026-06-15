@@ -1,14 +1,14 @@
-import { FormEvent, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
 	ArrowRight,
 	BookOpen,
 	CalendarDays,
 	Check,
 	CheckCircle2,
-	Clock3,
 	ExternalLink,
 	Layers,
 	Lightbulb,
+	Loader2,
 	MapPin,
 	MessageCircle,
 	Mic2,
@@ -16,8 +16,8 @@ import {
 	Play,
 	RotateCcw,
 	ShieldCheck,
-	Shuffle,
 	Sparkles,
+	Square,
 	Target,
 	Volume2,
 } from 'lucide-react'
@@ -53,6 +53,11 @@ import {
 	fallbackSourceItems,
 	type SourceItem,
 } from '@/learning/sources'
+import {
+	getPronunciationPassage,
+	pronunciationScoreLabel,
+	type PronunciationFeedback,
+} from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
 import { canTTS, speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
@@ -125,6 +130,10 @@ export default function Study() {
 	const [spokenFirst, setSpokenFirst] = useState(false)
 	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
 	const [repairFeedback, setRepairFeedback] = useState<FeedbackState | null>(null)
+	const [pronunciationFeedback, setPronunciationFeedback] =
+		useState<PronunciationFeedback | null>(null)
+	const [pronunciationLoading, setPronunciationLoading] = useState(false)
+	const [pronunciationError, setPronunciationError] = useState<string | null>(null)
 	const [unitStartedAt, setUnitStartedAt] = useState(Date.now())
 	const [sourceItems, setSourceItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [sourceDiagnostics, setSourceDiagnostics] =
@@ -179,6 +188,9 @@ export default function Study() {
 			setRepairAnswer('')
 			setFeedback(null)
 			setRepairFeedback(null)
+			setPronunciationFeedback(null)
+			setPronunciationError(null)
+			setPronunciationLoading(false)
 			setSpokenFirst(false)
 		}
 		load()
@@ -207,6 +219,9 @@ export default function Study() {
 	)
 	const sentenceActivity = sessionItems.find((item) => item.type === 'sentence')
 	const repairActivity = sessionItems.find((item) => item.type === 'repair')
+	const pronunciationActivity = sessionItems.find(
+		(item) => item.type === 'pronunciation'
+	)
 	const currentSentenceIndex = Math.min(
 		sentenceActivity?.completedCount ?? 0,
 		Math.max(0, sentenceQueue.length - 1)
@@ -230,6 +245,10 @@ export default function Study() {
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
 	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
 	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
+	const pronunciationPassage = useMemo(
+		() => getPronunciationPassage(programWeek),
+		[programWeek]
+	)
 	const progress = getDailySessionProgress(sessionItems)
 	const currentPhase = current ? getExercisePhase(current.exercise) : 'warmup'
 	const currentAction = current ? getExerciseAction(current.exercise) : 'Build'
@@ -258,6 +277,14 @@ export default function Study() {
 		setRepairFeedback(null)
 		setUnitStartedAt(Date.now())
 	}, [currentMistake?.id])
+
+	useEffect(() => {
+		if (activeItem?.type !== 'pronunciation') return
+		setPronunciationFeedback(null)
+		setPronunciationError(null)
+		setPronunciationLoading(false)
+		setUnitStartedAt(Date.now())
+	}, [activeItem?.id, activeItem?.type])
 
 	async function loadSources() {
 		setSourceLoading(true)
@@ -365,6 +392,55 @@ export default function Study() {
 		})
 		setRepairAnswer('')
 		setRepairFeedback(null)
+	}
+
+	async function assessPronunciation(audio: Blob) {
+		setPronunciationLoading(true)
+		setPronunciationError(null)
+		try {
+			const form = new FormData()
+			form.append('audio', audio, 'olingo-reading.webm')
+			form.append('passageId', pronunciationPassage.id)
+			form.append('expectedText', pronunciationPassage.text)
+			const response = await fetch('/api/pronunciation-assessment', {
+				method: 'POST',
+				body: form,
+			})
+			const data = await response.json().catch(() => null)
+			if (!response.ok) {
+				throw new Error(
+					data?.message ?? data?.error ?? 'Pronunciation assessment failed'
+				)
+			}
+			setPronunciationFeedback(data as PronunciationFeedback)
+		} catch (error) {
+			setPronunciationError(
+				error instanceof Error ? error.message : 'Pronunciation assessment failed'
+			)
+		} finally {
+			setPronunciationLoading(false)
+		}
+	}
+
+	async function completePronunciation() {
+		if (!pronunciationFeedback) return
+		const score = pronunciationFeedback.intelligibilityScore
+		await recordUnit(pronunciationActivity ?? null, {
+			activeMs: Date.now() - unitStartedAt,
+			success: score >= 60,
+			mistake: score < 80,
+			tags: [
+				'pronunciation',
+				...(score < 80 ? pronunciationFeedback.problemSounds.slice(0, 3) : []),
+			],
+		})
+		setPronunciationFeedback(null)
+		setPronunciationError(null)
+	}
+
+	function hearPronunciationPassage() {
+		if (!canTTS()) return
+		speak(pronunciationPassage.text, 'it-IT')
 	}
 
 	function revealHint() {
@@ -559,6 +635,18 @@ export default function Study() {
 							onAnswer={setRepairAnswer}
 							onNext={nextRepair}
 							onSubmit={handleRepairSubmit}
+						/>
+					)}
+
+					{activeItem?.type === 'pronunciation' && (
+						<PronunciationActivity
+							error={pronunciationError}
+							feedback={pronunciationFeedback}
+							loading={pronunciationLoading}
+							passage={pronunciationPassage}
+							onAssess={assessPronunciation}
+							onComplete={completePronunciation}
+							onHearModel={hearPronunciationPassage}
 						/>
 					)}
 
@@ -1095,6 +1183,210 @@ function DailyRepair({
 				)}
 			</div>
 		</form>
+	)
+}
+
+function preferredAudioMimeType() {
+	if (typeof MediaRecorder === 'undefined') return ''
+	return (
+		[
+			'audio/webm;codecs=opus',
+			'audio/webm',
+			'audio/mp4',
+			'audio/ogg;codecs=opus',
+		].find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
+	)
+}
+
+function PronunciationActivity({
+	error,
+	feedback,
+	loading,
+	onAssess,
+	onComplete,
+	onHearModel,
+	passage,
+}: {
+	error: string | null
+	feedback: PronunciationFeedback | null
+	loading: boolean
+	onAssess: (audio: Blob) => void
+	onComplete: () => void
+	onHearModel: () => void
+	passage: ReturnType<typeof getPronunciationPassage>
+}) {
+	const [recording, setRecording] = useState(false)
+	const [recordingError, setRecordingError] = useState<string | null>(null)
+	const chunksRef = useRef<Blob[]>([])
+	const recorderRef = useRef<MediaRecorder | null>(null)
+	const streamRef = useRef<MediaStream | null>(null)
+
+	useEffect(() => {
+		return () => {
+			if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+			streamRef.current?.getTracks().forEach((track) => track.stop())
+		}
+	}, [])
+
+	async function startRecording() {
+		setRecordingError(null)
+		if (
+			typeof navigator === 'undefined' ||
+			!navigator.mediaDevices?.getUserMedia ||
+			typeof MediaRecorder === 'undefined'
+		) {
+			setRecordingError('This browser cannot record audio here.')
+			return
+		}
+
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+			streamRef.current = stream
+			chunksRef.current = []
+			const mimeType = preferredAudioMimeType()
+			const recorder = new MediaRecorder(
+				stream,
+				mimeType ? { mimeType } : undefined
+			)
+			recorderRef.current = recorder
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) chunksRef.current.push(event.data)
+			}
+			recorder.onstop = () => {
+				const blob = new Blob(chunksRef.current, {
+					type: recorder.mimeType || 'audio/webm',
+				})
+				stream.getTracks().forEach((track) => track.stop())
+				streamRef.current = null
+				if (blob.size > 0) onAssess(blob)
+			}
+			recorder.start()
+			setRecording(true)
+		} catch (recordError) {
+			streamRef.current?.getTracks().forEach((track) => track.stop())
+			streamRef.current = null
+			setRecordingError(
+				recordError instanceof Error
+					? recordError.message
+					: 'Microphone permission was not available.'
+			)
+		}
+	}
+
+	function stopRecording() {
+		const recorder = recorderRef.current
+		if (!recorder || recorder.state === 'inactive') return
+		setRecording(false)
+		recorder.stop()
+	}
+
+	return (
+		<div className="answer-card pronunciation-card">
+			<label>Read this Italian aloud</label>
+			<div className="quest-meta">
+				<span>
+					<Mic2 size={15} />
+					{passage.level}
+				</span>
+				{passage.focus.map((focus) => (
+					<span key={focus}>{focus}</span>
+				))}
+			</div>
+			<div className="reading-passage">
+				<span>{passage.title}</span>
+				<p>{passage.text}</p>
+			</div>
+			<div className="repair-drills">
+				<span>
+					<Mic2 size={15} />
+					Reading cue
+				</span>
+				<p>{passage.prepCue}</p>
+			</div>
+
+			{(recordingError || error) && (
+				<div className="feedback feedback-repair">
+					<strong>Recording needs attention</strong>
+					<span className="feedback-note">{recordingError ?? error}</span>
+				</div>
+			)}
+
+			{loading && (
+				<div className="recording-note">
+					<Loader2 size={18} />
+					Assessing your reading...
+				</div>
+			)}
+
+			{feedback && (
+				<div className="pronunciation-feedback">
+					<div className="pronunciation-scores">
+						<div>
+							<strong>{feedback.intelligibilityScore}%</strong>
+							<span>{pronunciationScoreLabel(feedback.intelligibilityScore)}</span>
+						</div>
+						<div>
+							<strong>{feedback.passageCoverage}%</strong>
+							<span>coverage</span>
+						</div>
+						<div>
+							<strong>{feedback.rhythmScore}%</strong>
+							<span>rhythm</span>
+						</div>
+					</div>
+					<p className="feedback-note">{feedback.shortFeedback}</p>
+					<div className="transcript-box">
+						<span>Heard as</span>
+						<p>{feedback.transcript || 'No clear transcript returned.'}</p>
+					</div>
+					{feedback.missedWords.length > 0 && (
+						<div className="tag-row">
+							{feedback.missedWords.map((word) => (
+								<span key={word}>{word}</span>
+							))}
+						</div>
+					)}
+					{feedback.practiceLines.length > 0 && (
+						<div className="practice-lines">
+							<span>Try once more with</span>
+							{feedback.practiceLines.slice(0, 3).map((line) => (
+								<p key={line}>{line}</p>
+							))}
+						</div>
+					)}
+				</div>
+			)}
+
+			<div className="control-bar">
+				{canTTS() && (
+					<button className="btn btn-secondary" type="button" onClick={onHearModel}>
+						<Volume2 size={18} />
+						Model
+					</button>
+				)}
+				{recording ? (
+					<button className="btn btn-danger" type="button" onClick={stopRecording}>
+						<Square size={18} />
+						Stop
+					</button>
+				) : (
+					<button
+						className="btn btn-secondary"
+						disabled={loading}
+						type="button"
+						onClick={startRecording}>
+						<Mic2 size={18} />
+						Record
+					</button>
+				)}
+				{feedback && (
+					<button className="btn btn-primary" type="button" onClick={onComplete}>
+						<CheckCircle2 size={18} />
+						Complete reading
+					</button>
+				)}
+			</div>
+		</div>
 	)
 }
 

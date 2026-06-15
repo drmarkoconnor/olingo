@@ -15,7 +15,7 @@ describe('curriculum program', () => {
 
 	it('scales the 30-minute daily session shape', () => {
 		const plan = getSessionPlan(30)
-		expect(plan.map((item) => item.minutes)).toEqual([5, 8, 10, 5, 2])
+		expect(plan.map((item) => item.minutes)).toEqual([5, 8, 10, 4, 3])
 		expect(getSessionPlan(15).reduce((sum, item) => sum + item.minutes, 0)).toBeGreaterThan(10)
 	})
 

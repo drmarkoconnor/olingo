@@ -1,74 +1,183 @@
+import {
+	acceptInvite,
+	getUser,
+	handleAuthCallback,
+	login,
+	logout,
+	oauthLogin,
+	onAuthChange,
+	type User,
+} from '@netlify/identity'
 import { create } from 'zustand'
-import { supabase, hasSupabase } from '@/lib/supabase'
 
 type AuthState = {
-	userId: string // supabase uid or local fallback
+	userId: string
 	email?: string | null
+	name?: string | null
 	loading: boolean
-	error?: string | null
 	ready: boolean
+	authenticated: boolean
+	localMode: boolean
+	inviteToken?: string | null
+	error?: string | null
+	signInWithEmail: (email: string, password: string) => Promise<void>
 	signInWithGoogle: () => Promise<void>
+	acceptInvitePassword: (password: string) => Promise<void>
 	signOut: () => Promise<void>
 	refreshSession: () => Promise<void>
+	clearError: () => void
 }
 
 const LOCAL_UID_KEY = 'olingo.localUid'
+const localMode =
+	import.meta.env.DEV && import.meta.env.VITE_REQUIRE_AUTH !== 'true'
 
-function getOrCreateLocalUid() {
-	let v = localStorage.getItem(LOCAL_UID_KEY)
-	if (!v) {
-		v = crypto.randomUUID()
-		localStorage.setItem(LOCAL_UID_KEY, v)
-	}
-	return v
+function errorMessage(error: unknown) {
+	if (error instanceof Error) return error.message
+	return String(error || 'Something went wrong')
 }
 
-export const useAuth = create<AuthState>((set) => ({
-	userId: getOrCreateLocalUid(),
+function getOrCreateLocalUserId() {
+	if (typeof window === 'undefined') return 'local-dev'
+	const existing = window.localStorage.getItem(LOCAL_UID_KEY)
+	if (existing) return existing
+	const next = `local-${crypto.randomUUID()}`
+	window.localStorage.setItem(LOCAL_UID_KEY, next)
+	return next
+}
+
+function authenticatedState(user: User): Partial<AuthState> {
+	return {
+		userId: user.id,
+		email: user.email ?? null,
+		name: user.name ?? null,
+		authenticated: true,
+		loading: false,
+		ready: true,
+		inviteToken: null,
+		error: null,
+	}
+}
+
+function localState(): Partial<AuthState> {
+	return {
+		userId: getOrCreateLocalUserId(),
+		email: null,
+		name: 'Local practice',
+		authenticated: true,
+		loading: false,
+		ready: true,
+		localMode: true,
+		inviteToken: null,
+		error: null,
+	}
+}
+
+function signedOutState(error?: string | null): Partial<AuthState> {
+	return {
+		userId: 'signed-out',
+		email: null,
+		name: null,
+		authenticated: false,
+		loading: false,
+		ready: true,
+		localMode: false,
+		inviteToken: null,
+		error,
+	}
+}
+
+export const useAuth = create<AuthState>((set, get) => ({
+	userId: localMode ? getOrCreateLocalUserId() : 'loading',
 	email: null,
-	loading: false,
+	name: localMode ? 'Local practice' : null,
+	loading: !localMode,
+	ready: localMode,
+	authenticated: localMode,
+	localMode,
+	inviteToken: null,
 	error: null,
-	ready: true,
-	signInWithGoogle: async () => {
-		if (!hasSupabase() || !supabase)
-			return set({ error: 'Supabase not configured' })
+
+	signInWithEmail: async (email, password) => {
 		set({ loading: true, error: null })
-		const { error } = await supabase.auth.signInWithOAuth({
-			provider: 'google',
-			options: { redirectTo: window.location.origin },
-		})
-		if (error) set({ error: error.message })
-		set({ loading: false })
+		try {
+			const user = await login(email.trim(), password)
+			set(authenticatedState(user))
+		} catch (error) {
+			set({ loading: false, ready: true, error: errorMessage(error) })
+		}
 	},
+
+	signInWithGoogle: async () => {
+		set({ error: null })
+		try {
+			oauthLogin('google')
+		} catch (error) {
+			set({ error: errorMessage(error) })
+		}
+	},
+
+	acceptInvitePassword: async (password) => {
+		const token = get().inviteToken
+		if (!token) {
+			set({ error: 'This invite link is missing its token.' })
+			return
+		}
+		set({ loading: true, error: null })
+		try {
+			const user = await acceptInvite(token, password)
+			set(authenticatedState(user))
+		} catch (error) {
+			set({ loading: false, ready: true, error: errorMessage(error) })
+		}
+	},
+
 	signOut: async () => {
-		if (hasSupabase() && supabase) {
-			await supabase.auth.signOut()
+		if (localMode) {
+			set(localState())
+			return
 		}
-		// keep local uid for offline usage
-		set({ userId: getOrCreateLocalUid(), email: null })
+		set({ loading: true, error: null })
+		try {
+			await logout()
+		} catch (error) {
+			set({ error: errorMessage(error) })
+		} finally {
+			set(signedOutState(null))
+		}
 	},
+
 	refreshSession: async () => {
-		if (!hasSupabase() || !supabase) return
-		const { data } = await supabase.auth.getSession()
-		const session = data.session
-		if (session?.user) {
-			set({ userId: session.user.id, email: session.user.email })
+		if (localMode) {
+			set(localState())
+			return
+		}
+		set({ loading: true, error: null })
+		try {
+			const callback = await handleAuthCallback()
+			if (callback?.type === 'invite' && callback.token) {
+				set({
+					...signedOutState(null),
+					inviteToken: callback.token,
+				})
+				return
+			}
+			if (callback?.user) {
+				set(authenticatedState(callback.user))
+				return
+			}
+			const user = await getUser()
+			set(user ? authenticatedState(user) : signedOutState(null))
+		} catch (error) {
+			set(signedOutState(errorMessage(error)))
 		}
 	},
+
+	clearError: () => set({ error: null }),
 }))
 
-// Initialize from current session if available (non-blocking)
-if (hasSupabase() && supabase) {
-	supabase.auth.getSession().then(({ data }) => {
-		const u = data.session?.user
-		if (u) {
-			useAuth.setState({ userId: u.id, email: u.email })
-		}
-	})
-	supabase.auth.onAuthStateChange((_event, session) => {
-		const u = session?.user
-		if (u) useAuth.setState({ userId: u.id, email: u.email })
-		else useAuth.setState({ userId: getOrCreateLocalUid(), email: null })
+if (typeof window !== 'undefined' && !localMode) {
+	onAuthChange((_event, user) => {
+		useAuth.setState(user ? authenticatedState(user) : signedOutState(null))
 	})
 }
-

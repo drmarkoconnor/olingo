@@ -98,8 +98,8 @@ export const dailySessionPlan = [
 	{ id: 'mistakes', minutes: 5, label: 'Mistake retrieval' },
 	{ id: 'frames', minutes: 8, label: 'Verbs and frames' },
 	{ id: 'mixed', minutes: 10, label: 'Mixed drills' },
-	{ id: 'personal', minutes: 5, label: 'Personal output' },
-	{ id: 'log', minutes: 2, label: 'Error log' },
+	{ id: 'pronunciation', minutes: 4, label: 'Read aloud' },
+	{ id: 'input', minutes: 3, label: 'Video/article transfer' },
 ] as const
 
 export const roundFocusWeights: Record<RoundFocus, number> = {

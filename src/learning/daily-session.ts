@@ -5,6 +5,7 @@ export const sessionActivityLabels = {
 	recall: 'Recall cards',
 	sentence: 'Build sentences',
 	repair: 'Repair mistakes',
+	pronunciation: 'Read aloud',
 	transfer: 'Video or article',
 } as const
 
@@ -85,11 +86,92 @@ export function buildDailyActivityDefinitions(options: DailySessionOptions) {
 			  ]
 			: []),
 		{
+			type: 'pronunciation' as const,
+			label: sessionActivityLabels.pronunciation,
+			targetCount: 1,
+		},
+		{
 			type: 'transfer' as const,
 			label: sessionActivityLabels.transfer,
 			targetCount: 1,
 		},
 	]
+}
+
+async function reconcileSessionDefinitions(
+	session: DailySession,
+	options: DailySessionOptions
+) {
+	const existingItems = await loadDailySessionItems(session.id)
+	if (session.status === 'complete') return { session, items: existingItems }
+
+	const definitions = buildDailyActivityDefinitions(options)
+	const itemByType = new Map(existingItems.map((item) => [item.type, item]))
+	const missingDefinitions = definitions.filter(
+		(definition) => !itemByType.has(definition.type)
+	)
+	if (!missingDefinitions.length) return { session, items: existingItems }
+
+	const now = new Date().toISOString()
+	const definitionItems: DailySessionItem[] = definitions.map(
+		(definition, index): DailySessionItem => {
+			const existing = itemByType.get(definition.type)
+			if (existing) {
+				return {
+					...existing,
+					label: definition.label,
+					sortOrder: index,
+				}
+			}
+			return {
+				id: `${session.id}:${definition.type}`,
+				sessionId: session.id,
+				userId: session.userId,
+				dateKey: session.dateKey,
+				type: definition.type,
+				label: definition.label,
+				sortOrder: index,
+				targetCount: definition.targetCount,
+				completedCount: 0,
+				successCount: 0,
+				mistakeCount: 0,
+				activeMs: 0,
+				status: 'active' as const,
+				tags: [],
+				startedAt: null,
+				completedAt: null,
+			}
+		}
+	)
+	const mergedItems: DailySessionItem[] = [
+		...definitionItems,
+		...existingItems.filter(
+			(item) => !definitions.some((definition) => definition.type === item.type)
+		),
+	]
+
+	const completedCount = mergedItems.reduce(
+		(total, item) => total + Math.min(item.completedCount, item.targetCount),
+		0
+	)
+	const updatedSession: DailySession = {
+		...session,
+		plannedCount: mergedItems.reduce((total, item) => total + item.targetCount, 0),
+		completedCount,
+		status: 'active',
+		updatedAt: now,
+		completedAt: null,
+	}
+
+	await db.transaction('rw', db.dailySessions, db.dailySessionItems, async () => {
+		await db.dailySessions.put(updatedSession)
+		await db.dailySessionItems.bulkPut(mergedItems)
+	})
+
+	return {
+		session: updatedSession,
+		items: mergedItems.sort((a, b) => a.sortOrder - b.sortOrder),
+	}
 }
 
 export async function getOrCreateDailySession(
@@ -100,10 +182,7 @@ export async function getOrCreateDailySession(
 	const id = sessionIdFor(userId, dateKey)
 	const existing = await db.dailySessions.get(id)
 	if (existing) {
-		return {
-			session: existing,
-			items: await loadDailySessionItems(id),
-		}
+		return reconcileSessionDefinitions(existing, options)
 	}
 
 	const now = new Date().toISOString()
@@ -265,6 +344,7 @@ const adviceByTag: Array<{ tags: string[]; label: string }> = [
 	{ tags: ['agreement', 'article', 'gender', 'plural'], label: 'agreement and articles' },
 	{ tags: ['question'], label: 'question forms' },
 	{ tags: ['word-order', 'preposition'], label: 'sentence structure' },
+	{ tags: ['pronunciation', 'word-shape'], label: 'pronunciation clarity' },
 	{ tags: ['news', 'culture', 'politics'], label: 'topic vocabulary' },
 	{ tags: ['vocab'], label: 'core vocabulary' },
 ]

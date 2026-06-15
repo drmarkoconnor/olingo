@@ -98,6 +98,7 @@ export type DailySessionActivityType =
 	| 'recall'
 	| 'sentence'
 	| 'repair'
+	| 'pronunciation'
 	| 'transfer'
 
 export type DailySession = {

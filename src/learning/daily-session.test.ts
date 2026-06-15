@@ -52,10 +52,11 @@ describe('daily session planning', () => {
 			'recall',
 			'sentence',
 			'repair',
+			'pronunciation',
 			'transfer',
 		])
 		expect(getDailySessionProgress(first.items)).toEqual({
-			planned: 25,
+			planned: 26,
 			completed: 0,
 			percent: 0,
 		})

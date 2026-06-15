@@ -1,4 +1,6 @@
 import { getStore } from '@netlify/blobs'
+import { authFailed, requireUser } from './_shared/auth'
+import { methodNotAllowed } from './_shared/http'
 
 const feeds = [
 	{
@@ -269,7 +271,11 @@ async function writeCachedSources(payload: SourcesResponse) {
 	} catch {}
 }
 
-export default async () => {
+export default async (req: Request) => {
+	if (req.method !== 'GET') return methodNotAllowed()
+	const auth = await requireUser()
+	if (authFailed(auth)) return auth.response
+
 	const cached = await readCachedSources()
 	if (cached) return Response.json(cached)
 

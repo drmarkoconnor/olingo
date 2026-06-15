@@ -10,8 +10,6 @@ import {
 	WifiOff,
 } from 'lucide-react'
 import { useAuth } from '@/store/useAuth'
-import { useSync } from '@/store/useSync'
-import { hasSupabase } from '@/lib/supabase'
 import Study from '@/pages/Study'
 import Scenes from '@/pages/Scenes'
 import Mistakes from '@/pages/Mistakes'
@@ -19,8 +17,24 @@ import Stats from '@/pages/Stats'
 import Settings from '@/pages/Settings'
 import ImportData from '@/pages/ImportData'
 import Sources from '@/pages/Sources'
+import AuthGate from '@/ui/AuthGate'
 
 export default function App() {
+	const { authenticated, ready } = useAuth()
+
+	if (!ready) {
+		return (
+			<div className="auth-page">
+				<section className="auth-card">
+					<p className="eyebrow">Opening Olingo</p>
+					<h1>Checking your session...</h1>
+				</section>
+			</div>
+		)
+	}
+
+	if (!authenticated) return <AuthGate />
+
 	return (
 		<div className="app">
 			<header className="topbar">
@@ -74,24 +88,15 @@ export default function App() {
 }
 
 function TopRightStatus() {
-	const { email } = useAuth()
-	const { syncing, syncAll } = useSync()
-	const statusLabel = email ?? (hasSupabase() ? 'sign in' : 'local mode')
+	const { email, localMode, name } = useAuth()
+	const statusLabel = localMode ? 'local practice' : email ?? name ?? 'signed in'
 
 	return (
 		<div className="top-status">
 			<span>
-				{hasSupabase() ? <Cloud size={14} /> : <WifiOff size={14} />}
+				{localMode ? <WifiOff size={14} /> : <Cloud size={14} />}
 				{statusLabel}
 			</span>
-			{hasSupabase() && (
-				<button
-					className="small-sync"
-					disabled={syncing}
-					onClick={syncAll}>
-					{syncing ? 'Syncing' : 'Sync'}
-				</button>
-			)}
 		</div>
 	)
 }

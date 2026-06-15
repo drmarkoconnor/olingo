@@ -1,7 +1,6 @@
 import Papa from 'papaparse'
 import { db } from '@/storage/db'
 import { useAuth } from '@/store/useAuth'
-import { supabase, hasSupabase } from '@/lib/supabase'
 import { useDB } from '@/store/useDB'
 
 type Row = {
@@ -30,24 +29,7 @@ export default function ImportData() {
 		await db.words.bulkPut(localWords)
 		// seed user cards for these words
 		await useDB.getState().ensureUserCardsForAllWords(userId)
-
-		// If Supabase available, also upsert into shared words table
-		if (hasSupabase() && supabase) {
-			try {
-				const payload = localWords.map((w) => ({
-					id: w.id,
-					italian: w.italian,
-					english: w.english,
-					pos: w.pos,
-					category: w.category,
-				}))
-				const { error } = await supabase.from('words').upsert(payload)
-				if (error) console.error('Supabase upsert error:', error.message)
-			} catch (err) {
-				console.error('Supabase upsert failed', err)
-			}
-		}
-		alert(`Imported ${rows.length} rows${hasSupabase() ? ' (shared)' : ''}`)
+		alert(`Imported ${rows.length} rows`)
 	}
 	return (
 		<div>
@@ -57,4 +39,3 @@ export default function ImportData() {
 		</div>
 	)
 }
-

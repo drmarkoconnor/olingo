@@ -1,4 +1,5 @@
 import { getStore } from '@netlify/blobs'
+import { authFailed, requireUser } from './_shared/auth'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
 type Body = {
@@ -41,6 +42,9 @@ function drills(body: Body) {
 
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
+	const auth = await requireUser()
+	if (authFailed(auth)) return auth.response
+
 	const body = await readJson<Body>(req)
 	if (!body?.mistake) return json({ error: 'Missing mistake' }, { status: 400 })
 	const pack = {
@@ -49,7 +53,7 @@ export default async (req: Request) => {
 		createdAt: new Date().toISOString(),
 	}
 	const store = getStore({ name: 'generated-packs' })
-	await store.setJSON(`repairs/${pack.id}`, pack)
+	await store.setJSON(`users/${encodeURIComponent(auth.user.id)}/repairs/${pack.id}`, pack)
 	return json(pack)
 }
 
