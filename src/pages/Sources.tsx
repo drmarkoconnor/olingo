@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react'
-import { CalendarDays, ExternalLink, Newspaper, Play, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+	CalendarDays,
+	ExternalLink,
+	Languages,
+	Newspaper,
+	Play,
+	RefreshCw,
+} from 'lucide-react'
 import {
 	fallbackSourceItems,
 	italianSources,
@@ -38,6 +45,19 @@ type GeneratedPack = {
 	savedCount?: number
 }
 
+type SourceReader = {
+	title: string
+	sourceName: string
+	sourceUrl: string
+	level: string
+	topic: string
+	paragraphs: Array<{ italian: string; english: string }>
+	glossary: Array<{ italian: string; english: string }>
+	discussionPrompt: string
+	provider: 'openai' | 'fallback'
+	cached?: boolean
+}
+
 export default function Sources() {
 	const { userId } = useAuth()
 	const { programWeek, targetLevel } = useSettings()
@@ -47,9 +67,21 @@ export default function Sources() {
 	const [activePrompt, setActivePrompt] = useState<SourceItem>(fallbackSourceItems[0])
 	const [diagnostics, setDiagnostics] = useState<SourceDiagnostics | null>()
 	const [generatedPack, setGeneratedPack] = useState<GeneratedPack | null>(null)
+	const [reader, setReader] = useState<SourceReader | null>(null)
+	const [readerLoading, setReaderLoading] = useState(false)
+	const [readerError, setReaderError] = useState<string | null>(null)
+	const readerRequestId = useRef(0)
 	const videoItems = items.filter(isVideoItem)
 	const articleItems = items.filter((item) => !isVideoItem(item))
 	const sourcesUnlocked = sourceContentUnlocked(programWeek)
+
+	function selectPrompt(item: SourceItem) {
+		readerRequestId.current += 1
+		setActivePrompt(item)
+		setReader(null)
+		setReaderLoading(false)
+		setReaderError(null)
+	}
 
 	async function loadSources() {
 		setLoading(true)
@@ -63,11 +95,11 @@ export default function Sources() {
 			setDiagnostics(data.diagnostics ?? null)
 			if (data.items.length) {
 				setItems(data.items)
-				setActivePrompt(data.items[0])
+				selectPrompt(data.items[0])
 			}
 		} catch {
 			setItems(fallbackSourceItems)
-			setActivePrompt(fallbackSourceItems[0])
+			selectPrompt(fallbackSourceItems[0])
 			setDiagnostics(null)
 		} finally {
 			setLoading(false)
@@ -77,6 +109,62 @@ export default function Sources() {
 	useEffect(() => {
 		loadSources()
 	}, [])
+
+	async function openReader(item = activePrompt) {
+		if (isVideoItem(item)) return
+		const requestId = readerRequestId.current + 1
+		readerRequestId.current = requestId
+		setActivePrompt(item)
+		setReaderLoading(true)
+		setReaderError(null)
+		try {
+			const response = await fetch('/api/source-reader', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sourceItem: item,
+					level: targetLevel,
+				}),
+			})
+			const text = await response.text()
+			const data = text
+				? (() => {
+						try {
+							return JSON.parse(text)
+						} catch {
+							return { error: text.slice(0, 180) }
+						}
+				  })()
+				: null
+			if (!response.ok) {
+				throw new Error(
+					data?.message ?? data?.error ?? `Reader unavailable (${response.status})`
+				)
+			}
+			if (readerRequestId.current !== requestId) return
+			setReader(data as SourceReader)
+		} catch (error) {
+			if (readerRequestId.current !== requestId) return
+			setReader(null)
+			setReaderError(
+				error instanceof Error ? error.message : 'Reader unavailable'
+			)
+		} finally {
+			if (readerRequestId.current === requestId) setReaderLoading(false)
+		}
+	}
+
+	function chooseSource(source: ItalianSource) {
+		if (source.type === 'video') {
+			const firstVideo = items.find((item) => item.id.startsWith('youtube-'))
+			if (firstVideo) selectPrompt(firstVideo)
+			return
+		}
+		const sourceItem =
+			items.find((item) => item.sourceName === source.name) ??
+			items.find((item) => item.topic === source.topic)
+		if (sourceItem) openReader(sourceItem)
+	}
 
 	async function generatePack() {
 		if (!sourcesUnlocked) return
@@ -160,8 +248,18 @@ export default function Sources() {
 					<div className="action-row left">
 						<a className="btn btn-primary" href={activePrompt.link} target="_blank" rel="noreferrer">
 							<ExternalLink size={18} />
-							Source
+							{isVideoItem(activePrompt) ? 'Source' : 'Original'}
 						</a>
+						{!isVideoItem(activePrompt) && (
+							<button
+								className="btn btn-primary"
+								type="button"
+								disabled={readerLoading}
+								onClick={() => openReader(activePrompt)}>
+								<Languages size={18} />
+								{readerLoading ? 'Preparing' : 'Read in app'}
+							</button>
+						)}
 						<button className="btn btn-secondary" type="button" onClick={loadSources}>
 							<RefreshCw size={18} />
 							{loading ? 'Loading' : 'Refresh'}
@@ -187,6 +285,69 @@ export default function Sources() {
 					)}
 				</div>
 			</section>
+
+			{(reader || readerLoading || readerError) && (
+				<section className="source-panel reader-panel">
+					<div className="source-panel-header">
+						<div>
+							<p className="eyebrow">{reader?.sourceName ?? activePrompt.sourceName}</p>
+							<h2>{reader?.title ?? 'Preparing reader'}</h2>
+						</div>
+						{reader && (
+							<a href={reader.sourceUrl} target="_blank" rel="noreferrer">
+								<ExternalLink size={16} />
+								Original
+							</a>
+						)}
+					</div>
+					{readerLoading && (
+						<div className="source-empty">
+							<RefreshCw className="spin" size={22} />
+							<p>Preparing a simple reading version...</p>
+						</div>
+					)}
+					{readerError && (
+						<div className="feedback feedback-repair">
+							<strong>Reader unavailable</strong>
+							<span className="feedback-note">{readerError}</span>
+						</div>
+					)}
+					{reader && (
+						<>
+							<div className="reader-grid">
+								<div className="reader-column">
+									<span>Simple Italian</span>
+									{reader.paragraphs.map((paragraph, index) => (
+										<p key={`it-${index}`}>{paragraph.italian}</p>
+									))}
+								</div>
+								<div className="reader-column">
+									<span>English meaning</span>
+									{reader.paragraphs.map((paragraph, index) => (
+										<p key={`en-${index}`}>{paragraph.english}</p>
+									))}
+								</div>
+							</div>
+							<div className="reader-tools">
+								<div>
+									<strong>Useful words</strong>
+									<div className="tag-row">
+										{reader.glossary.map((item) => (
+											<span key={`${item.italian}-${item.english}`}>
+												{item.italian} = {item.english}
+											</span>
+										))}
+									</div>
+								</div>
+								<div>
+									<strong>Say this next</strong>
+									<p>{reader.discussionPrompt}</p>
+								</div>
+							</div>
+						</>
+					)}
+				</section>
+			)}
 
 			{generatedPack && (
 				<section className="source-panel generated-pack-panel">
@@ -251,7 +412,7 @@ export default function Sources() {
 										<button
 											className="btn btn-secondary"
 											type="button"
-											onClick={() => setActivePrompt(item)}>
+											onClick={() => selectPrompt(item)}>
 											<Play size={17} />
 											Use this
 										</button>
@@ -303,13 +464,17 @@ export default function Sources() {
 								<button
 									className="btn btn-secondary"
 									type="button"
-									onClick={() => setActivePrompt(item)}>
+									onClick={() => selectPrompt(item)}>
 									<Newspaper size={17} />
 									Use article
 								</button>
+								<button type="button" onClick={() => openReader(item)}>
+									<Languages size={16} />
+									Read in app
+								</button>
 								<a href={item.link} target="_blank" rel="noreferrer">
 									<ExternalLink size={16} />
-									Read
+									Original
 								</a>
 							</div>
 						</article>
@@ -319,12 +484,11 @@ export default function Sources() {
 
 			<div className="source-grid">
 				{italianSources.map((source) => (
-					<a
+					<button
 						className="source-card"
-						href={getSourceUrl(source, items)}
 						key={source.id}
-						target="_blank"
-						rel="noreferrer">
+						type="button"
+						onClick={() => chooseSource(source)}>
 						<div className="stat-icon">
 							{source.type === 'video' ? (
 								<Play size={22} />
@@ -335,7 +499,7 @@ export default function Sources() {
 						<span>{source.topic}</span>
 						<strong>{source.name}</strong>
 						<p>{getSourceNotes(source, diagnostics)}</p>
-					</a>
+					</button>
 				))}
 			</div>
 		</div>
@@ -372,13 +536,6 @@ function formatSourceDate(value?: string) {
 		day: 'numeric',
 		month: 'short',
 	}).format(date)
-}
-
-function getSourceUrl(source: ItalianSource, items: SourceItem[]) {
-	if (source.id !== 'youtube-italian-culture') return source.url
-
-	const firstYoutubeItem = items.find((item) => item.id.startsWith('youtube-'))
-	return firstYoutubeItem?.link ?? source.url
 }
 
 function getSourceNotes(

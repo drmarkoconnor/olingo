@@ -1354,20 +1354,27 @@ input[type='number']:focus {
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
+	flex-wrap: wrap;
 	margin-top: 4px;
 }
 
-.source-card-actions .btn {
+.source-card-actions .btn,
+.source-card-actions button {
 	padding: 9px 12px;
 }
 
-.source-card-actions a {
+.source-card-actions a,
+.source-card-actions button:not(.btn) {
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
+	border: 0;
+	background: transparent;
 	color: var(--blue);
+	cursor: pointer;
 	font-size: 14px;
 	font-weight: 850;
+	font-family: inherit;
 	text-decoration: none;
 }
 
@@ -1429,6 +1436,11 @@ input[type='number']:focus {
 	box-shadow: 0 8px 22px rgba(36, 48, 73, 0.08);
 }
 
+.source-card {
+	cursor: pointer;
+	font: inherit;
+}
+
 .source-item {
 	cursor: pointer;
 }
@@ -1455,6 +1467,67 @@ input[type='number']:focus {
 .source-card p {
 	margin: 0;
 	color: var(--muted);
+}
+
+.reader-panel {
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--card);
+	padding: 18px;
+	box-shadow: 0 8px 22px rgba(36, 48, 73, 0.08);
+}
+
+.reader-panel .source-panel-header a {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--blue);
+	font-weight: 850;
+	text-decoration: none;
+}
+
+.reader-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.reader-column {
+	display: grid;
+	gap: 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: #f8fbff;
+	padding: 16px;
+}
+
+.reader-column span,
+.reader-tools strong {
+	color: var(--blue);
+	font-size: 12px;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.reader-column p,
+.reader-tools p {
+	margin: 0;
+	line-height: 1.55;
+}
+
+.reader-tools {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(260px, 0.7fr);
+	gap: 14px;
+}
+
+.reader-tools > div {
+	display: grid;
+	gap: 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	padding: 14px;
 }
 
 .stat-tile {
@@ -2035,6 +2108,11 @@ input[type='number']:focus {
 	.article-choice-grid {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
+
+	.reader-grid,
+	.reader-tools {
+		grid-template-columns: 1fr;
+	}
 }
 
 @media (max-width: 680px) {
@@ -2146,6 +2224,8 @@ input[type='number']:focus {
 	}
 
 	.match-board,
+	.reader-grid,
+	.reader-tools,
 	.source-grid,
 	.video-choice-grid,
 	.article-choice-grid,
