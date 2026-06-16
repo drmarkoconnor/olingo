@@ -13,7 +13,11 @@ import {
 import { getFluencySnapshot } from '@/learning/progress'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import { getCurriculumStage, roundFocusWeights } from '@/learning/curriculum'
+import {
+	getCurriculumStage,
+	roundFocusLabels,
+	roundFocusWeights,
+} from '@/learning/curriculum'
 import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
 
 type Snapshot = Awaited<ReturnType<typeof getFluencySnapshot>>
@@ -78,7 +82,7 @@ export default function Stats() {
 					{Object.entries(roundFocusWeights).map(([focus, weight]) => (
 						<span key={focus}>
 							<strong>{weight}%</strong>
-							{focus}
+							{roundFocusLabels[focus as keyof typeof roundFocusLabels]}
 						</span>
 					))}
 				</div>

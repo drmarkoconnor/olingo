@@ -24,4 +24,12 @@ describe('curriculum program', () => {
 		expect(sourceContentUnlocked(newsUnlockWeek - 1)).toBe(false)
 		expect(sourceContentUnlocked(newsUnlockWeek)).toBe(true)
 	})
+
+	it('uses learner-facing stage labels rather than internal grammar tags', () => {
+		const stage = getCurriculumStage(1)
+		expect(stage.title).toBe('Build Simple Everyday Sentences')
+		expect(stage.goals).toContain('Ask and answer simple questions')
+		expect(stage.goals).not.toContain('present tense')
+		expect(stage.goals).not.toContain('possessives')
+	})
 })

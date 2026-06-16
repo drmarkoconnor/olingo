@@ -29,8 +29,13 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'core-sentence-engine',
 		weeks: [1, 4],
-		title: 'Core Sentence Engine',
-		goals: ['questions', 'present tense', 'possessives', 'simple pronouns'],
+		title: 'Build Simple Everyday Sentences',
+		goals: [
+			'Ask and answer simple questions',
+			'Talk about family and daily life',
+			'Say what belongs to whom',
+			'Use short pronouns in real sentences',
+		],
 		structures: ['questo/questa', 'mio/tuo/suo', 'mi/ti/lo/la', 'c e/ci sono'],
 		verbs: ['essere', 'avere', 'fare', 'andare', 'venire', 'stare'],
 		topics: ['family', 'everyday living', 'simple questions'],
@@ -40,8 +45,12 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'modal-engine',
 		weeks: [5, 8],
-		title: 'Modal Engine And Everyday Action',
-		goals: ['can/want/have to', 'common infinitives', 'family arrangements'],
+		title: 'Make Plans And Everyday Requests',
+		goals: [
+			'Say what you can do',
+			'Say what you want or need to do',
+			'Arrange simple plans with family',
+		],
 		structures: ['posso venire', 'vuoi uscire', 'deve studiare', 'negative modal questions'],
 		verbs: ['uscire', 'comprare', 'leggere', 'scrivere', 'chiamare', 'aiutare'],
 		topics: ['routines', 'errands', 'appointments'],
@@ -51,8 +60,12 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'real-life-past',
 		weeks: [9, 12],
-		title: 'Passato Prossimo For Real Life',
-		goals: ['recent events', 'yesterday/last week', 'movement and object pronouns'],
+		title: 'Talk About What Happened',
+		goals: [
+			'Tell someone what happened recently',
+			'Talk about yesterday and last week',
+			'Keep short past-tense stories moving',
+		],
 		structures: ['ho visto', 'sono andato/a', 'l ho chiamato/a', 'non mi ha risposto'],
 		verbs: ['vedere', 'fare', 'dire', 'dare', 'mettere', 'trovare', 'capire'],
 		topics: ['visits', 'conversations', 'family events', 'problems'],
@@ -62,8 +75,12 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'pronoun-control',
 		weeks: [13, 16],
-		title: 'Pronoun Control Without The Rabbit Hole',
-		goals: ['him/her/it', 'to me/to her/to them', 'clear forms before compressed forms'],
+		title: 'Refer To People And Things Clearly',
+		goals: [
+			'Say him, her, it, and them without freezing',
+			'Say who received or heard something',
+			'Use clear forms before compressed forms',
+		],
 		structures: ['mi ha chiamato', 'le ho dato', 'gli ho detto', 'l ho dato a Maria'],
 		verbs: ['dare', 'dire', 'portare', 'chiamare', 'rispondere'],
 		topics: ['family messages', 'giving things', 'telling people'],
@@ -73,8 +90,12 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'future-opinions',
 		weeks: [17, 20],
-		title: 'Future, Opinions, And Family/Politics',
-		goals: ['plans', 'opinions', 'agreement and disagreement'],
+		title: 'Share Plans, Opinions, And Reasons',
+		goals: [
+			'Talk about future plans',
+			'Give a simple opinion',
+			'Agree or disagree politely',
+		],
 		structures: ['penso che', 'secondo me', 'sono d accordo', 'non sono sicuro/a'],
 		verbs: ['votare', 'decidere', 'credere', 'pensare', 'sembrare', 'succedere'],
 		topics: ['family decisions', 'local issues', 'work/life', 'simple politics'],
@@ -84,8 +105,12 @@ export const curriculumStages: CurriculumStage[] = [
 	{
 		id: 'complex-phrase-fluency',
 		weeks: [21, 24],
-		title: 'Complex Phrase Fluency',
-		goals: ['longer turns', 'connected clauses', 'conditional chunks'],
+		title: 'Speak In Longer Connected Turns',
+		goals: [
+			'Link ideas into one longer answer',
+			'Explain why something matters',
+			'Use common polite conditional phrases',
+		],
 		structures: ['quando', 'perche', 'anche se', 'mentre', 'prima di', 'dopo aver', 'che'],
 		verbs: ['vorrei', 'potrei', 'dovrei', 'migliorare', 'cambiare'],
 		topics: ['news stories', 'opinions', 'plans', 'past events'],
@@ -95,11 +120,11 @@ export const curriculumStages: CurriculumStage[] = [
 ]
 
 export const dailySessionPlan = [
-	{ id: 'mistakes', minutes: 5, label: 'Mistake retrieval' },
-	{ id: 'frames', minutes: 8, label: 'Verbs and frames' },
-	{ id: 'mixed', minutes: 10, label: 'Mixed drills' },
+	{ id: 'mistakes', minutes: 5, label: 'Repair old mistakes' },
+	{ id: 'frames', minutes: 8, label: 'Build useful verb frames' },
+	{ id: 'mixed', minutes: 10, label: 'Mix sentence practice' },
 	{ id: 'pronunciation', minutes: 4, label: 'Read aloud' },
-	{ id: 'input', minutes: 3, label: 'Video/article transfer' },
+	{ id: 'input', minutes: 3, label: 'Watch or read and respond' },
 ] as const
 
 export const roundFocusWeights: Record<RoundFocus, number> = {
@@ -108,6 +133,14 @@ export const roundFocusWeights: Record<RoundFocus, number> = {
 	'past-pronouns': 20,
 	topics: 10,
 	stretch: 5,
+}
+
+export const roundFocusLabels: Record<RoundFocus, string> = {
+	core: 'Core sentence control',
+	'verbs-frames': 'Useful verbs and phrase frames',
+	'past-pronouns': 'Past events and pronouns',
+	topics: 'Topic vocabulary',
+	stretch: 'Longer connected speech',
 }
 
 export const mistakeScheduleDays = [1, 3, 7]
