@@ -33,6 +33,7 @@ import {
 	type SceneVocabulary,
 } from '@/learning/content'
 import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
+import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
 import {
 	completeDailySessionUnit,
 	getActiveDailyItem,
@@ -111,6 +112,8 @@ export default function Study() {
 	const {
 		dailyGoal,
 		programWeek,
+		selectedSceneAction,
+		selectedSceneId,
 		targetLevel,
 		sentenceLength,
 		setTargetLevel,
@@ -141,6 +144,7 @@ export default function Study() {
 		useState<SourceDiagnostics | null>()
 	const [sourceLoading, setSourceLoading] = useState(false)
 	const [sourceReflection, setSourceReflection] = useState('')
+	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -155,10 +159,20 @@ export default function Study() {
 		async function load() {
 			setLoading(true)
 			const sprintLimit = Math.max(12, Math.min(20, Math.round(dailyGoal / 2) + 4))
+			const cards = await loadSceneCards(userId, programWeek)
+			const selectedScene =
+				cards.find((card) => card.id === selectedSceneId && card.available) ??
+				cards.find((card) => card.available) ??
+				scenes[0]
+			const selectedAction = selectedScene.actions.includes(selectedSceneAction)
+				? selectedSceneAction
+				: selectedScene.actions[0]
 			const queue = await loadDailySprint(userId, sprintLimit, {
 				targetLevel,
 				sentenceLength,
-				sceneAction: 'Ask opinion',
+				sceneId: selectedScene.id,
+				sceneTitle: selectedScene.title,
+				sceneAction: selectedAction,
 				programWeek,
 			})
 			const sentenceItems = queue
@@ -180,6 +194,7 @@ export default function Study() {
 				todayKey
 			)
 			if (!mounted) return
+			setSceneCards(cards)
 			setSentenceQueue(sentenceItems)
 			setRepairMistakes(dueMistakes)
 			setSession(bundle.session)
@@ -204,6 +219,8 @@ export default function Study() {
 		dailyGoal,
 		programWeek,
 		sentenceLength,
+		selectedSceneAction,
+		selectedSceneId,
 		targetLevel,
 		todayKey,
 		userId,
@@ -232,8 +249,16 @@ export default function Study() {
 		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
 	]
 	const scene = useMemo(
-		() => (current ? getScene(current.exercise.sceneId) : scenes[0]),
-		[current]
+		() => {
+			const fallback =
+				sceneCards.find((card) => card.id === selectedSceneId) ?? scenes[0]
+			if (!current) return fallback
+			return (
+				sceneCards.find((card) => card.id === current.exercise.sceneId) ??
+				getScene(current.exercise.sceneId)
+			)
+		},
+		[current, sceneCards, selectedSceneId]
 	)
 	const vocabulary = useMemo(
 		() => getVocabularyForScene(scene.id).slice(0, 8),

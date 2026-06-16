@@ -992,6 +992,15 @@ input[type='number']:focus {
 	min-height: 430px;
 }
 
+.scene-card.selected {
+	outline: 3px solid var(--scene-accent);
+	outline-offset: 3px;
+}
+
+.scene-card.complete {
+	box-shadow: 0 18px 38px rgba(16, 78, 50, 0.2);
+}
+
 .scene-card.locked {
 	filter: saturate(0.65);
 }
@@ -1024,6 +1033,55 @@ input[type='number']:focus {
 	font-size: 15px;
 }
 
+.scene-progress-meter {
+	display: grid;
+	gap: 8px;
+}
+
+.scene-progress-meter > div {
+	height: 8px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.22);
+}
+
+.scene-progress-meter span {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--scene-accent);
+}
+
+.scene-progress-meter strong {
+	color: rgba(255, 255, 255, 0.92);
+	font-size: 12px;
+	font-weight: 900;
+	line-height: 1.35;
+}
+
+.scene-action-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.scene-action-chip {
+	border: 1px solid rgba(255, 255, 255, 0.36);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.16);
+	color: #fff;
+	cursor: pointer;
+	font-weight: 850;
+	padding: 8px 10px;
+}
+
+.scene-action-chip.active,
+.scene-action-chip:hover {
+	background: var(--scene-accent);
+	border-color: transparent;
+	color: #111827;
+}
+
 .scene-footer {
 	justify-content: space-between;
 }
@@ -1033,6 +1091,11 @@ input[type='number']:focus {
 	align-items: center;
 	gap: 6px;
 	font-weight: 800;
+}
+
+.scene-footer-actions {
+	display: flex;
+	gap: 8px;
 }
 
 .icon-button {
@@ -1045,6 +1108,15 @@ input[type='number']:focus {
 	background: rgba(255, 255, 255, 0.18);
 	color: #fff;
 	cursor: pointer;
+}
+
+.icon-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+.spin {
+	animation: spin 0.9s linear infinite;
 }
 
 .mistake-list {

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { cefrLevels, type CefrLevel } from '@/learning/content'
+import { cefrLevels, scenes, type CefrLevel } from '@/learning/content'
 
 type SettingsState = {
 	dailyGoal: number
@@ -8,12 +8,15 @@ type SettingsState = {
 	targetLevel: CefrLevel
 	sentenceLength: 'short' | 'medium' | 'long'
 	programWeek: number
+	selectedSceneId: string
+	selectedSceneAction: string
 	setDailyGoal: (n: number) => void
 	setSound: (v: boolean) => void
 	setTTS: (v: boolean) => void
 	setTargetLevel: (v: SettingsState['targetLevel']) => void
 	setSentenceLength: (v: SettingsState['sentenceLength']) => void
 	setProgramWeek: (n: number) => void
+	setSelectedScene: (sceneId: string, action?: string) => void
 }
 
 const LS_KEY = 'olingo.settings'
@@ -26,7 +29,20 @@ type PersistedSettings = Pick<
 	| 'targetLevel'
 	| 'sentenceLength'
 	| 'programWeek'
+	| 'selectedSceneId'
+	| 'selectedSceneAction'
 >
+
+const defaultSettings: PersistedSettings = {
+	dailyGoal: 30,
+	sound: true,
+	tts: true,
+	targetLevel: 'B1',
+	sentenceLength: 'medium',
+	programWeek: 1,
+	selectedSceneId: 'milan-cafe',
+	selectedSceneAction: 'Ask opinion',
+}
 
 function clampProgramWeek(value: number) {
 	if (!Number.isFinite(value)) return 1
@@ -37,38 +53,52 @@ function normaliseTargetLevel(value: unknown): CefrLevel {
 	return cefrLevels.includes(value as CefrLevel) ? (value as CefrLevel) : 'B1'
 }
 
+function normaliseSceneId(value: unknown) {
+	const scene = scenes.find((item) => item.id === value)
+	return scene?.id ?? defaultSettings.selectedSceneId
+}
+
+function normaliseSceneAction(sceneId: string, value: unknown) {
+	const scene = scenes.find((item) => item.id === sceneId) ?? scenes[0]
+	if (typeof value === 'string' && scene.actions.includes(value)) return value
+	return scene.actions[0] ?? defaultSettings.selectedSceneAction
+}
+
 function load(): PersistedSettings {
 	try {
+		if (typeof localStorage === 'undefined') return defaultSettings
 		const raw = localStorage.getItem(LS_KEY)
 		if (raw) {
 			const parsed = JSON.parse(raw)
+			const selectedSceneId = normaliseSceneId(parsed.selectedSceneId)
 			return {
-				...{
-					dailyGoal: 30,
-					sound: true,
-					tts: true,
-					targetLevel: 'B1' as const,
-					sentenceLength: 'medium' as const,
-					programWeek: 1,
-				},
+				...defaultSettings,
 				...parsed,
 				targetLevel: normaliseTargetLevel(parsed.targetLevel),
 				programWeek: clampProgramWeek(parsed.programWeek ?? 1),
+				selectedSceneId,
+				selectedSceneAction: normaliseSceneAction(
+					selectedSceneId,
+					parsed.selectedSceneAction
+				),
 			}
 		}
 	} catch {}
-	return {
-		dailyGoal: 30,
-		sound: true,
-		tts: true,
-		targetLevel: 'B1',
-		sentenceLength: 'medium',
-		programWeek: 1,
-	}
+	return defaultSettings
 }
 
 function save(s: SettingsState) {
-	const { dailyGoal, sound, tts, targetLevel, sentenceLength, programWeek } = s
+	if (typeof localStorage === 'undefined') return
+	const {
+		dailyGoal,
+		sound,
+		tts,
+		targetLevel,
+		sentenceLength,
+		programWeek,
+		selectedSceneId,
+		selectedSceneAction,
+	} = s
 	localStorage.setItem(
 		LS_KEY,
 		JSON.stringify({
@@ -78,6 +108,8 @@ function save(s: SettingsState) {
 			targetLevel,
 			sentenceLength,
 			programWeek,
+			selectedSceneId,
+			selectedSceneAction,
 		})
 	)
 }
@@ -106,6 +138,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
 	},
 	setProgramWeek: (programWeek) => {
 		set({ programWeek: clampProgramWeek(programWeek) })
+		save(get())
+	},
+	setSelectedScene: (sceneId, action) => {
+		const selectedSceneId = normaliseSceneId(sceneId)
+		set({
+			selectedSceneId,
+			selectedSceneAction: normaliseSceneAction(selectedSceneId, action),
+		})
 		save(get())
 	},
 }))

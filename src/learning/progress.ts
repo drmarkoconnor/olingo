@@ -96,6 +96,8 @@ export async function ensureExerciseStates(userId: string) {
 export type SprintOptions = {
 	targetLevel?: CefrLevel
 	sentenceLength?: 'short' | 'medium' | 'long'
+	sceneId?: string
+	sceneTitle?: string
 	sceneAction?: string
 	programWeek?: number
 }
@@ -110,6 +112,8 @@ export async function loadDailySprint(
 		targetLevel: options.targetLevel,
 		sentenceLength: options.sentenceLength,
 		programWeek,
+		sceneId: options.sceneId,
+		sceneTitle: options.sceneTitle,
 		action: options.sceneAction,
 		minFresh: Math.max(16, limit * 2),
 	})
@@ -157,6 +161,7 @@ export async function loadDailySprint(
 		(item) => !exerciseIsGenerated(item.exercise)
 	)
 	const focusSceneId =
+		options.sceneId ??
 		generatedFresh[0]?.exercise.sceneId ??
 		fixedFresh[0]?.exercise.sceneId ??
 		repeatDueItems[0]?.exercise.sceneId ??
@@ -194,6 +199,7 @@ export async function loadDailySprint(
 	], programWeek)
 	const dueIds = new Set(dueItems.map((item) => item.exercise.id))
 	const topUpItems: SprintItem[] = []
+	const topUpIds = new Set<string>()
 
 	if (orderedDue.length < limit) {
 		const allStates = await db.exerciseStates.where('userId').equals(userId).toArray()
@@ -217,17 +223,20 @@ export async function loadDailySprint(
 				  )
 				: []
 		for (const exercise of [
-			...unseenExercises.filter(exerciseIsGenerated),
 			...actionExercises,
+			...sameSceneExercises.filter(exerciseIsGenerated),
 			...sameSceneExercises,
+			...restExercises.filter(exerciseIsGenerated),
 			...restExercises,
 			...(topUpItems.length + orderedDue.length < limit ? repeatExercises : []),
 		]) {
 			if (dueIds.has(exercise.id)) continue
+			if (topUpIds.has(exercise.id)) continue
 			if (!eligibleExerciseIds.has(exercise.id)) continue
 			const state = stateMap.get(exercise.id)
 			if (!state || state.archived) continue
 			topUpItems.push({ exercise, state })
+			topUpIds.add(exercise.id)
 			if (orderedDue.length + topUpItems.length >= limit) break
 		}
 	}
