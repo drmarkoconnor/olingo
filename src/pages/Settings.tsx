@@ -1,5 +1,6 @@
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
+import { cefrLevels } from '@/learning/content'
 import { getCurriculumStage } from '@/learning/curriculum'
 
 export default function Settings() {
@@ -74,7 +75,7 @@ export default function Settings() {
 			<div className="tile">
 				<label>Level</label>
 				<div className="segmented">
-					{(['A1', 'A2', 'B1'] as const).map((level) => (
+					{cefrLevels.map((level) => (
 						<button
 							type="button"
 							key={level}

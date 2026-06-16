@@ -27,6 +27,7 @@ import {
 	getExercisePhase,
 	getScene,
 	getVocabularyForScene,
+	cefrLevels,
 	scenes,
 	sprintPhaseLabels,
 	type SceneVocabulary,
@@ -550,7 +551,7 @@ export default function Study() {
 
 				<div className="level-row">
 					<div className="segmented compact">
-						{(['A1', 'A2', 'B1'] as const).map((level) => (
+						{cefrLevels.map((level) => (
 							<button
 								type="button"
 								key={level}

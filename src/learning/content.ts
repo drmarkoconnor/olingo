@@ -15,6 +15,8 @@ export type Scene = {
 
 export type ExerciseType = 'chunk' | 'sentence' | 'transform' | 'scene'
 export type SprintPhase = 'warmup' | 'produce' | 'repair' | 'speak'
+export type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+export type ExerciseDifficulty = 1 | 2 | 3 | 4 | 5
 export type CurriculumStrand =
 	| 'input'
 	| 'output'
@@ -37,7 +39,9 @@ export type Exercise = {
 	hints: string[]
 	tags: string[]
 	phraseFamily: string
-	difficulty: 1 | 2 | 3
+	difficulty: ExerciseDifficulty
+	cefrLevel?: CefrLevel
+	generated?: boolean
 	phase?: SprintPhase
 	action?: string
 	communicativeGoal?: string
@@ -51,6 +55,8 @@ export type Exercise = {
 	construction?: string
 	npcLine?: string
 }
+
+export const cefrLevels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
 
 export type SceneVocabulary = {
 	id: string

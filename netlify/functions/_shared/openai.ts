@@ -52,7 +52,7 @@ export async function evaluateWithOpenAI(payload: unknown) {
 				{
 					role: 'system',
 					content:
-						'You evaluate A2-B1 Italian learner answers. Reward communicative courage first, then give one concise correction. Return only schema-valid JSON.',
+						'You evaluate A1-C1 Italian learner answers. Reward communicative courage first at the requested level, then give one concise correction. Return only schema-valid JSON.',
 				},
 				{
 					role: 'user',

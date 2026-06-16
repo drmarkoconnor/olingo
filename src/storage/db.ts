@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie'
+import type { CefrLevel, Exercise } from '@/learning/content'
 
 export type Word = {
 	id: string
@@ -92,6 +93,17 @@ export type MisspellingItem = {
 	exerciseIds: string[]
 }
 
+export type GeneratedExerciseItem = Exercise & {
+	userId: string
+	cefrLevel: CefrLevel
+	source: 'ai' | 'fallback'
+	contentHash: string
+	createdAt: string
+	lastUsedAt?: string | null
+	useCount: number
+	retired: 0 | 1
+}
+
 export type DailySessionStatus = 'active' | 'complete'
 export type DailySessionActivityType =
 	| 'match'
@@ -146,6 +158,7 @@ export class OlingoDB extends Dexie {
 	exerciseLogs!: Table<ExerciseLog, number>
 	mistakes!: Table<MistakeItem, string>
 	misspellings!: Table<MisspellingItem, string>
+	generatedExercises!: Table<GeneratedExerciseItem, string>
 	dailySessions!: Table<DailySession, string>
 	dailySessionItems!: Table<DailySessionItem, string>
 
@@ -188,6 +201,23 @@ export class OlingoDB extends Dexie {
 			mistakes:
 				'&id, userId, exerciseId, sceneId, status, nextDueAt, createdAt, *tags',
 			misspellings: '&id, userId, word, correction, lastSeenAt',
+			dailySessions:
+				'&id, userId, dateKey, status, startedAt, updatedAt, completedAt',
+			dailySessionItems:
+				'&id, sessionId, userId, dateKey, type, status, sortOrder',
+		})
+		this.version(5).stores({
+			words: '&id, italian, english, pos, category',
+			userCards: '&[userId+wordId], userId, wordId, nextDueAt, archived',
+			reviewLogs: '++id, userId, wordId, ts',
+			exerciseStates:
+				'&[userId+exerciseId], userId, exerciseId, nextDueAt, archived',
+			exerciseLogs: '++id, userId, exerciseId, ts, outcome, correct',
+			mistakes:
+				'&id, userId, exerciseId, sceneId, status, nextDueAt, createdAt, *tags',
+			misspellings: '&id, userId, word, correction, lastSeenAt',
+			generatedExercises:
+				'&id, userId, sceneId, cefrLevel, phraseFamily, construction, createdAt, lastUsedAt, retired, *tags',
 			dailySessions:
 				'&id, userId, dateKey, status, startedAt, updatedAt, completedAt',
 			dailySessionItems:

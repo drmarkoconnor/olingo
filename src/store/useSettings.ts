@@ -1,10 +1,11 @@
 import { create } from 'zustand'
+import { cefrLevels, type CefrLevel } from '@/learning/content'
 
 type SettingsState = {
 	dailyGoal: number
 	sound: boolean
 	tts: boolean
-	targetLevel: 'A1' | 'A2' | 'B1'
+	targetLevel: CefrLevel
 	sentenceLength: 'short' | 'medium' | 'long'
 	programWeek: number
 	setDailyGoal: (n: number) => void
@@ -32,6 +33,10 @@ function clampProgramWeek(value: number) {
 	return Math.min(24, Math.max(1, Math.round(value)))
 }
 
+function normaliseTargetLevel(value: unknown): CefrLevel {
+	return cefrLevels.includes(value as CefrLevel) ? (value as CefrLevel) : 'B1'
+}
+
 function load(): PersistedSettings {
 	try {
 		const raw = localStorage.getItem(LS_KEY)
@@ -47,6 +52,7 @@ function load(): PersistedSettings {
 					programWeek: 1,
 				},
 				...parsed,
+				targetLevel: normaliseTargetLevel(parsed.targetLevel),
 				programWeek: clampProgramWeek(parsed.programWeek ?? 1),
 			}
 		}

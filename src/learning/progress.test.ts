@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getExerciseAction } from '@/learning/content'
 import { exerciseIsAvailableForWeek, sourceContentUnlocked } from '@/learning/curriculum'
+import { saveGeneratedExercises } from '@/learning/generated-sentences'
 import {
 	ensureExerciseStates,
 	loadDailySprint,
@@ -80,6 +81,51 @@ describe('daily sprint composition', () => {
 		})
 
 		expect(queue.some((item) => item.sourceMistakeId === mistake.id)).toBe(true)
+	})
+
+	it('uses saved AI-generated sentences as production prompts', async () => {
+		await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish: 'I need to make a quick decision with my family.',
+					targetItalian:
+						'Devo prendere una decisione veloce con la mia famiglia.',
+					acceptedItalian: [
+						'Devo prendere una decisione veloce con la mia famiglia.',
+					],
+					hints: ['Use devo + infinitive.'],
+					tags: ['generated', 'modal', 'family'],
+					phraseFamily: 'Making plans',
+					action: 'Ask opinion',
+					keyVerb: 'dovere',
+					construction: 'modal-infinitive',
+				},
+			],
+			{
+				targetLevel: 'B1',
+				programWeek: 5,
+				sentenceLength: 'medium',
+				sceneId: 'family-table',
+				action: 'Ask opinion',
+				provider: 'openai',
+				packId: 'test-pack',
+			}
+		)
+
+		const queue = await loadDailySprint(userId, 4, {
+			targetLevel: 'B1',
+			sentenceLength: 'medium',
+			sceneAction: 'Ask opinion',
+			programWeek: 5,
+		})
+
+		expect(queue.some((item) => item.exercise.generated)).toBe(true)
+		expect(
+			queue.some((item) =>
+				item.exercise.targetItalian.includes('decisione veloce')
+			)
+		).toBe(true)
 	})
 })
 

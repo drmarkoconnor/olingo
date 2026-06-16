@@ -5,6 +5,7 @@ import {
 	getExercisePhase,
 	getExerciseRepairPrompts,
 	sprintPhaseOrder,
+	type CefrLevel,
 	type Exercise,
 	type SprintPhase,
 } from '@/learning/content'
@@ -18,6 +19,16 @@ import {
 	mistakeScheduleDays,
 	roundFocusWeights,
 } from '@/learning/curriculum'
+import {
+	difficultyForLevel,
+	ensureGeneratedSentencePool,
+	exerciseIsGenerated,
+	generatedItemToExercise,
+	loadGeneratedExercises,
+	loadSeenProductionExerciseIds,
+	recordGeneratedExerciseUse,
+	sentenceFitsLength,
+} from '@/learning/generated-sentences'
 import {
 	evaluateAnswer,
 	outcomeIsCorrect,
@@ -55,8 +66,13 @@ function sortByPriority(a: SprintItem, b: SprintItem) {
 }
 
 function sortByCurriculumPriority(a: SprintItem, b: SprintItem, week: number) {
+	if (a.sourceMistakeId && !b.sourceMistakeId) return -1
+	if (b.sourceMistakeId && !a.sourceMistakeId) return 1
+	if (exerciseIsGenerated(a.exercise) !== exerciseIsGenerated(b.exercise)) {
+		return exerciseIsGenerated(a.exercise) ? -1 : 1
+	}
 	const base = sortByPriority(a, b)
-	if (a.sourceMistakeId || b.sourceMistakeId || base !== 0) return base
+	if (base !== 0) return base
 	const aAvailable = exerciseIsAvailableForWeek(a.exercise, week) ? 0 : 1
 	const bAvailable = exerciseIsAvailableForWeek(b.exercise, week) ? 0 : 1
 	if (aAvailable !== bAvailable) return aAvailable - bAvailable
@@ -68,7 +84,9 @@ function sortByCurriculumPriority(a: SprintItem, b: SprintItem, week: number) {
 export async function ensureExerciseStates(userId: string) {
 	const existing = await db.exerciseStates.where('userId').equals(userId).toArray()
 	const existingSet = new Set(existing.map((state) => state.exerciseId))
-	const toCreate = exercises
+	const generated = await loadGeneratedExercises(userId)
+	const allExercises = [...exercises, ...generated.map(generatedItemToExercise)]
+	const toCreate = allExercises
 		.filter((exercise) => !existingSet.has(exercise.id))
 		.map((exercise) => createExerciseState(userId, exercise.id))
 
@@ -76,26 +94,10 @@ export async function ensureExerciseStates(userId: string) {
 }
 
 export type SprintOptions = {
-	targetLevel?: 'A1' | 'A2' | 'B1'
+	targetLevel?: CefrLevel
 	sentenceLength?: 'short' | 'medium' | 'long'
 	sceneAction?: string
 	programWeek?: number
-}
-
-function difficultyForLevel(level?: SprintOptions['targetLevel']) {
-	if (level === 'A1') return 1
-	if (level === 'A2') return 2
-	return 3
-}
-
-function sentenceFitsLength(
-	exercise: Exercise,
-	length?: SprintOptions['sentenceLength']
-) {
-	if (!length || length === 'long') return true
-	const words = exercise.targetItalian.split(/\s+/).filter(Boolean).length
-	if (length === 'short') return words <= 7
-	return words <= 11
 }
 
 export async function loadDailySprint(
@@ -103,8 +105,21 @@ export async function loadDailySprint(
 	limit = 8,
 	options: SprintOptions = {}
 ) {
-	await ensureExerciseStates(userId)
 	const programWeek = clampProgramWeek(options.programWeek ?? 1)
+	await ensureGeneratedSentencePool(userId, {
+		targetLevel: options.targetLevel,
+		sentenceLength: options.sentenceLength,
+		programWeek,
+		action: options.sceneAction,
+		minFresh: Math.max(16, limit * 2),
+	})
+	await ensureExerciseStates(userId)
+	const generated = await loadGeneratedExercises(userId)
+	const allExercises = [...generated.map(generatedItemToExercise), ...exercises]
+	const exerciseById = new Map(
+		allExercises.map((exercise) => [exercise.id, exercise])
+	)
+	const seenProductionIds = await loadSeenProductionExerciseIds(userId)
 	const states = await db.exerciseStates
 		.where('userId')
 		.equals(userId)
@@ -113,7 +128,7 @@ export async function loadDailySprint(
 
 	const maxDifficulty = difficultyForLevel(options.targetLevel)
 	const eligibleExerciseIds = new Set(
-		exercises
+		allExercises
 			.filter((exercise) => exercise.difficulty <= maxDifficulty)
 			.filter((exercise) => exerciseIsAvailableForWeek(exercise, programWeek))
 			.filter((exercise) => sentenceFitsLength(exercise, options.sentenceLength))
@@ -123,24 +138,46 @@ export async function loadDailySprint(
 	const dueItems: SprintItem[] = states
 		.filter((state) => eligibleExerciseIds.has(state.exerciseId))
 		.map((state) => {
-			const exercise = getExercise(state.exerciseId)
+			const exercise = exerciseById.get(state.exerciseId)
 			return exercise ? { exercise, state } : null
 		})
 		.filter((item): item is NonNullable<typeof item> => Boolean(item))
 		.sort((a, b) => sortByCurriculumPriority(a, b, programWeek))
 
-	const focusSceneId = dueItems[0]?.exercise.sceneId ?? 'milan-cafe'
+	const freshDueItems = dueItems.filter(
+		(item) => !seenProductionIds.has(item.exercise.id)
+	)
+	const repeatDueItems = dueItems.filter((item) =>
+		seenProductionIds.has(item.exercise.id)
+	)
+	const generatedFresh = freshDueItems.filter((item) =>
+		exerciseIsGenerated(item.exercise)
+	)
+	const fixedFresh = freshDueItems.filter(
+		(item) => !exerciseIsGenerated(item.exercise)
+	)
+	const focusSceneId =
+		generatedFresh[0]?.exercise.sceneId ??
+		fixedFresh[0]?.exercise.sceneId ??
+		repeatDueItems[0]?.exercise.sceneId ??
+		'milan-cafe'
 	const actionDue = options.sceneAction
-		? dueItems.filter(
+		? freshDueItems.filter(
 				(item) =>
 					item.exercise.sceneId === focusSceneId &&
 					getExerciseAction(item.exercise) === options.sceneAction
 		  )
 		: []
-	const sameSceneDue = dueItems.filter(
+	const generatedSameScene = generatedFresh.filter(
 		(item) => item.exercise.sceneId === focusSceneId
 	)
-	const otherDue = dueItems.filter((item) => item.exercise.sceneId !== focusSceneId)
+	const generatedOther = generatedFresh.filter(
+		(item) => item.exercise.sceneId !== focusSceneId
+	)
+	const sameSceneDue = fixedFresh.filter(
+		(item) => item.exercise.sceneId === focusSceneId
+	)
+	const otherDue = fixedFresh.filter((item) => item.exercise.sceneId !== focusSceneId)
 	const repairItems = await loadMistakeRepairItems(
 		userId,
 		eligibleExerciseIds,
@@ -149,8 +186,11 @@ export async function loadDailySprint(
 	const orderedDue = orderSprintItems([
 		...repairItems,
 		...(actionDue.length ? actionDue : sameSceneDue),
+		...generatedSameScene,
+		...generatedOther,
 		...sameSceneDue,
 		...otherDue,
+		...(freshDueItems.length ? [] : repeatDueItems),
 	], programWeek)
 	const dueIds = new Set(dueItems.map((item) => item.exercise.id))
 	const topUpItems: SprintItem[] = []
@@ -158,10 +198,16 @@ export async function loadDailySprint(
 	if (orderedDue.length < limit) {
 		const allStates = await db.exerciseStates.where('userId').equals(userId).toArray()
 		const stateMap = new Map(allStates.map((state) => [state.exerciseId, state]))
-		const sameSceneExercises = exercises.filter(
+		const unseenExercises = allExercises.filter(
+			(exercise) => !seenProductionIds.has(exercise.id)
+		)
+		const repeatExercises = allExercises.filter((exercise) =>
+			seenProductionIds.has(exercise.id)
+		)
+		const sameSceneExercises = unseenExercises.filter(
 			(exercise) => exercise.sceneId === focusSceneId
 		)
-		const restExercises = exercises.filter(
+		const restExercises = unseenExercises.filter(
 			(exercise) => exercise.sceneId !== focusSceneId
 		)
 		const actionExercises =
@@ -171,9 +217,11 @@ export async function loadDailySprint(
 				  )
 				: []
 		for (const exercise of [
+			...unseenExercises.filter(exerciseIsGenerated),
 			...actionExercises,
 			...sameSceneExercises,
 			...restExercises,
+			...(topUpItems.length + orderedDue.length < limit ? repeatExercises : []),
 		]) {
 			if (dueIds.has(exercise.id)) continue
 			if (!eligibleExerciseIds.has(exercise.id)) continue
@@ -268,6 +316,9 @@ export async function submitExerciseAnswer(args: {
 	const updated = scheduleExerciseReview(args.item.state, result.outcome)
 
 	await db.exerciseStates.put(updated)
+	if (exerciseIsGenerated(args.item.exercise)) {
+		await recordGeneratedExerciseUse(args.userId, args.item.exercise.id)
+	}
 	await db.exerciseLogs.add({
 		userId: args.userId,
 		exerciseId: args.item.exercise.id,
