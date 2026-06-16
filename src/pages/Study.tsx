@@ -58,6 +58,7 @@ import {
 import {
 	getPronunciationPassage,
 	pronunciationScoreLabel,
+	recordPronunciationAttempt,
 	type PronunciationFeedback,
 } from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
@@ -138,6 +139,7 @@ export default function Study() {
 		useState<PronunciationFeedback | null>(null)
 	const [pronunciationLoading, setPronunciationLoading] = useState(false)
 	const [pronunciationError, setPronunciationError] = useState<string | null>(null)
+	const [pronunciationAttempted, setPronunciationAttempted] = useState(false)
 	const [unitStartedAt, setUnitStartedAt] = useState(Date.now())
 	const [sourceItems, setSourceItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [sourceDiagnostics, setSourceDiagnostics] =
@@ -309,6 +311,7 @@ export default function Study() {
 		setPronunciationFeedback(null)
 		setPronunciationError(null)
 		setPronunciationLoading(false)
+		setPronunciationAttempted(false)
 		setUnitStartedAt(Date.now())
 	}, [activeItem?.id, activeItem?.type])
 
@@ -423,6 +426,7 @@ export default function Study() {
 	async function assessPronunciation(audio: Blob) {
 		setPronunciationLoading(true)
 		setPronunciationError(null)
+		setPronunciationAttempted(true)
 		try {
 			const form = new FormData()
 			form.append('audio', audio, 'olingo-reading.webm')
@@ -435,13 +439,13 @@ export default function Study() {
 			const data = await response.json().catch(() => null)
 			if (!response.ok) {
 				throw new Error(
-					data?.message ?? data?.error ?? 'Pronunciation assessment failed'
+					data?.message ?? data?.error ?? 'Pronunciation score unavailable'
 				)
 			}
 			setPronunciationFeedback(data as PronunciationFeedback)
 		} catch (error) {
 			setPronunciationError(
-				error instanceof Error ? error.message : 'Pronunciation assessment failed'
+				error instanceof Error ? error.message : 'Pronunciation score unavailable'
 			)
 		} finally {
 			setPronunciationLoading(false)
@@ -449,19 +453,34 @@ export default function Study() {
 	}
 
 	async function completePronunciation() {
-		if (!pronunciationFeedback) return
-		const score = pronunciationFeedback.intelligibilityScore
+		if (!pronunciationActivity) return
+		const activeMs = Date.now() - unitStartedAt
+		const score = pronunciationFeedback?.intelligibilityScore
+		if (pronunciationFeedback) {
+			await recordPronunciationAttempt({
+				userId,
+				sessionId: session?.id ?? null,
+				dateKey: todayKey,
+				passage: pronunciationPassage,
+				feedback: pronunciationFeedback,
+				activeMs,
+			})
+		}
 		await recordUnit(pronunciationActivity ?? null, {
-			activeMs: Date.now() - unitStartedAt,
-			success: score >= 60,
-			mistake: score < 80,
+			activeMs,
+			success: true,
+			mistake: typeof score === 'number' ? score < 70 : false,
 			tags: [
 				'pronunciation',
-				...(score < 80 ? pronunciationFeedback.problemSounds.slice(0, 3) : []),
+				...(pronunciationFeedback && (score ?? 0) < 80
+					? pronunciationFeedback.problemSounds.slice(0, 3)
+					: []),
+				...(!pronunciationFeedback ? ['unscored-reading'] : []),
 			],
 		})
 		setPronunciationFeedback(null)
 		setPronunciationError(null)
+		setPronunciationAttempted(false)
 	}
 
 	function hearPronunciationPassage() {
@@ -668,6 +687,11 @@ export default function Study() {
 						<PronunciationActivity
 							error={pronunciationError}
 							feedback={pronunciationFeedback}
+							canComplete={
+								Boolean(pronunciationFeedback) ||
+								pronunciationAttempted ||
+								Boolean(pronunciationError)
+							}
 							loading={pronunciationLoading}
 							passage={pronunciationPassage}
 							onAssess={assessPronunciation}
@@ -942,10 +966,10 @@ function SentenceBuilder({
 							{canTTS() && (
 								<button
 									className="btn btn-secondary"
-									type="button"
-									onClick={onHearModel}>
-									<Volume2 size={18} />
-									Hear model
+										type="button"
+										onClick={onHearModel}>
+										<Volume2 size={18} />
+										AI model
 								</button>
 							)}
 						</div>
@@ -1190,11 +1214,11 @@ function DailyRepair({
 				{canTTS() && (
 					<button
 						className="btn btn-secondary"
-						type="button"
-						onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
-						<Volume2 size={18} />
-						Model
-					</button>
+							type="button"
+							onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
+							<Volume2 size={18} />
+							AI model
+						</button>
 				)}
 				{feedback ? (
 					<button className="btn btn-primary" type="button" onClick={onNext}>
@@ -1225,6 +1249,7 @@ function preferredAudioMimeType() {
 }
 
 function PronunciationActivity({
+	canComplete,
 	error,
 	feedback,
 	loading,
@@ -1233,6 +1258,7 @@ function PronunciationActivity({
 	onHearModel,
 	passage,
 }: {
+	canComplete: boolean
 	error: string | null
 	feedback: PronunciationFeedback | null
 	loading: boolean
@@ -1246,6 +1272,7 @@ function PronunciationActivity({
 	const chunksRef = useRef<Blob[]>([])
 	const recorderRef = useRef<MediaRecorder | null>(null)
 	const streamRef = useRef<MediaStream | null>(null)
+	const canFinish = canComplete || Boolean(recordingError)
 
 	useEffect(() => {
 		return () => {
@@ -1331,8 +1358,8 @@ function PronunciationActivity({
 			</div>
 
 			{(recordingError || error) && (
-				<div className="feedback feedback-repair">
-					<strong>Recording needs attention</strong>
+				<div className="feedback feedback-communicative">
+					<strong>Reading recorded</strong>
 					<span className="feedback-note">{recordingError ?? error}</span>
 				</div>
 			)}
@@ -1387,7 +1414,7 @@ function PronunciationActivity({
 				{canTTS() && (
 					<button className="btn btn-secondary" type="button" onClick={onHearModel}>
 						<Volume2 size={18} />
-						Model
+						AI model
 					</button>
 				)}
 				{recording ? (
@@ -1405,10 +1432,10 @@ function PronunciationActivity({
 						Record
 					</button>
 				)}
-				{feedback && (
+				{canFinish && !loading && !recording && (
 					<button className="btn btn-primary" type="button" onClick={onComplete}>
 						<CheckCircle2 size={18} />
-						Complete reading
+						{feedback ? 'Record score' : 'Complete reading'}
 					</button>
 				)}
 			</div>

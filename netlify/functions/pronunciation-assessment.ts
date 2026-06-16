@@ -71,6 +71,24 @@ function tokenise(value: string) {
 	return normalise(value).split(' ').filter(Boolean)
 }
 
+function lcsLength(a: string[], b: string[]) {
+	const previous = Array.from({ length: b.length + 1 }, () => 0)
+	const current = Array.from({ length: b.length + 1 }, () => 0)
+	for (let row = 1; row <= a.length; row += 1) {
+		for (let column = 1; column <= b.length; column += 1) {
+			current[column] =
+				a[row - 1] === b[column - 1]
+					? previous[column - 1] + 1
+					: Math.max(previous[column], current[column - 1])
+		}
+		for (let column = 0; column <= b.length; column += 1) {
+			previous[column] = current[column]
+			current[column] = 0
+		}
+	}
+	return previous[b.length]
+}
+
 function deterministicFeedback(
 	expectedText: string,
 	transcript: string
@@ -81,14 +99,18 @@ function deterministicFeedback(
 	const missedWords = expectedTokens
 		.filter((token) => !heardSet.has(token))
 		.slice(0, 8)
-	const coverage = expectedTokens.length
+	const unorderedCoverage = expectedTokens.length
 		? ((expectedTokens.length - missedWords.length) / expectedTokens.length) * 100
 		: 0
+	const sequenceCoverage = expectedTokens.length
+		? (lcsLength(expectedTokens, heardTokens) / expectedTokens.length) * 100
+		: 0
+	const coverage = Math.max(unorderedCoverage, sequenceCoverage)
 	const lengthPenalty = Math.min(
-		28,
-		Math.abs(expectedTokens.length - heardTokens.length) * 4
+		16,
+		Math.abs(expectedTokens.length - heardTokens.length) * 2
 	)
-	const score = clampScore(coverage - lengthPenalty)
+	const score = clampScore(Math.max(coverage - lengthPenalty, transcript ? 35 : 0))
 	const rhythmScore = clampScore(100 - lengthPenalty)
 
 	return {
@@ -100,9 +122,11 @@ function deterministicFeedback(
 		missedWords,
 		substitutions: [],
 		shortFeedback:
-			score >= 80
+			score >= 85
+				? 'Excellent clarity. Keep this calm rhythm.'
+				: score >= 70
 				? 'Clear enough to use. Repeat once with the same steady rhythm.'
-				: 'The reading partly landed. Slow down, keep the vowel endings clear, then try the line again.',
+				: 'Recorded. Use the model once, then keep the same courage and make one slower pass.',
 		practiceLines: [
 			expectedTokens.slice(0, Math.ceil(expectedTokens.length / 2)).join(' '),
 			expectedTokens.slice(Math.ceil(expectedTokens.length / 2)).join(' '),
@@ -110,7 +134,7 @@ function deterministicFeedback(
 	}
 }
 
-async function transcribeAudio(audio: File, apiKey: string) {
+async function transcribeAudio(audio: File, apiKey: string, expectedText: string) {
 	const form = new FormData()
 	form.append('file', audio)
 	form.append(
@@ -119,6 +143,7 @@ async function transcribeAudio(audio: File, apiKey: string) {
 	)
 	form.append('language', 'it')
 	form.append('response_format', 'json')
+	form.append('prompt', expectedText)
 
 	const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
 		method: 'POST',
@@ -154,7 +179,7 @@ async function assessWithOpenAI(payload: {
 				{
 					role: 'system',
 					content:
-						'You assess an Italian learner reading a known passage. Be kind and practical. Judge intelligibility and coverage from the transcript, not accent perfection. Return only schema-valid JSON.',
+						'You assess an Italian learner reading a known Italian passage. Return a mark out of 100 and practical feedback, never pass/fail language. Treat the transcript as noisy evidence from speech recognition, judge intelligibility and coverage generously, and do not penalise accent perfection. Return only schema-valid JSON.',
 				},
 				{
 					role: 'user',
@@ -206,7 +231,7 @@ export default async (req: Request) => {
 	}
 
 	const apiKey = getEnv('OPENAI_API_KEY')
-	const transcript = apiKey ? await transcribeAudio(audio, apiKey) : ''
+	const transcript = apiKey ? await transcribeAudio(audio, apiKey, expectedText) : ''
 	const fallback = deterministicFeedback(expectedText, transcript)
 	const ai = await assessWithOpenAI({
 		expectedText,

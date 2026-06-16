@@ -1,3 +1,5 @@
+import { db, type PronunciationAttempt } from '@/storage/db'
+
 export type PronunciationPassage = {
 	id: string
 	title: string
@@ -90,8 +92,41 @@ export function getPronunciationPassage(programWeek: number) {
 }
 
 export function pronunciationScoreLabel(score: number) {
-	if (score >= 85) return 'clear'
-	if (score >= 70) return 'usable'
-	if (score >= 50) return 'partial'
-	return 'try again'
+	if (score >= 90) return 'excellent'
+	if (score >= 80) return 'clear'
+	if (score >= 65) return 'usable'
+	if (score >= 45) return 'developing'
+	return 'recorded'
+}
+
+export async function recordPronunciationAttempt(args: {
+	userId: string
+	sessionId?: string | null
+	dateKey: string
+	passage: PronunciationPassage
+	feedback: PronunciationFeedback
+	activeMs: number
+}) {
+	const now = new Date().toISOString()
+	const attempt: PronunciationAttempt = {
+		id: `${args.userId}:pronunciation:${now}:${args.passage.id}`,
+		userId: args.userId,
+		sessionId: args.sessionId ?? null,
+		dateKey: args.dateKey,
+		passageId: args.passage.id,
+		passageTitle: args.passage.title,
+		expectedText: args.passage.text,
+		transcript: args.feedback.transcript,
+		score: args.feedback.intelligibilityScore,
+		passageCoverage: args.feedback.passageCoverage,
+		rhythmScore: args.feedback.rhythmScore,
+		problemSounds: args.feedback.problemSounds,
+		missedWords: args.feedback.missedWords,
+		practiceLines: args.feedback.practiceLines,
+		provider: args.feedback.provider ?? null,
+		activeMs: Math.max(0, Math.round(args.activeMs)),
+		createdAt: now,
+	}
+	await db.pronunciationAttempts.put(attempt)
+	return attempt
 }

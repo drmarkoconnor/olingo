@@ -4,6 +4,7 @@ import {
 	Gauge,
 	Layers,
 	Lightbulb,
+	Mic2,
 	RotateCcw,
 	Sparkles,
 	Tags,
@@ -13,6 +14,7 @@ import { getFluencySnapshot } from '@/learning/progress'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
 import { getCurriculumStage, roundFocusWeights } from '@/learning/curriculum'
+import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
 
 type Snapshot = Awaited<ReturnType<typeof getFluencySnapshot>>
 
@@ -31,15 +33,20 @@ export default function Stats() {
 		spokenFirst: 0,
 		conceptHints: 0,
 		wordBankHints: 0,
+		pronunciationAttempts: 0,
+		latestPronunciationScore: null,
+		averagePronunciationScore: 0,
 		topMisspellings: [],
 		categoryErrors: [],
 		phraseFamilies: [],
 		phaseCounts: [],
 	})
+	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 
 	useEffect(() => {
 		getFluencySnapshot(userId).then(setSnapshot)
-	}, [userId])
+		loadSceneCards(userId, programWeek).then(setSceneCards)
+	}, [programWeek, userId])
 
 	const averageSeconds = snapshot.averageMs
 		? Math.round(snapshot.averageMs / 1000)
@@ -49,6 +56,10 @@ export default function Stats() {
 			? `${averageSeconds}s`
 			: '<1s'
 		: 'No data'
+	const latestPronunciationLabel =
+		typeof snapshot.latestPronunciationScore === 'number'
+			? `${snapshot.latestPronunciationScore}/100`
+			: 'No score'
 
 	return (
 		<div className="page-stack">
@@ -105,6 +116,11 @@ export default function Stats() {
 					value={snapshot.conceptHints.toString()}
 				/>
 				<StatTile
+					icon={<Mic2 size={22} />}
+					label="Latest read-aloud"
+					value={latestPronunciationLabel}
+				/>
+				<StatTile
 					icon={<Layers size={22} />}
 					label="Word-bank hints"
 					value={snapshot.wordBankHints.toString()}
@@ -116,17 +132,25 @@ export default function Stats() {
 					<Sparkles size={20} />
 					<h2>Narrative progress</h2>
 				</div>
-					<div className="fluency-track">
-						<div className="track-step complete">Cafe opener</div>
-					<div className={snapshot.spokenFirst >= 4 ? 'track-step complete' : 'track-step'}>
-						Family table
-					</div>
-					<div className={snapshot.communicativeAccuracy >= 70 ? 'track-step complete' : 'track-step'}>
-						Bookshop chat
-					</div>
-					<div className={snapshot.repaired >= 3 ? 'track-step complete' : 'track-step'}>
-						Newsstand opinions
-					</div>
+				<div className="fluency-track">
+					{sceneCards.map((scene) => (
+						<div
+							className={
+								scene.complete
+									? 'track-step complete'
+									: scene.available
+									? 'track-step active'
+									: 'track-step'
+							}
+							key={scene.id}>
+							{scene.title}
+							<span>
+								{scene.available
+									? `${scene.completedCount}/${scene.targetCount}`
+									: 'locked'}
+							</span>
+						</div>
+					))}
 				</div>
 			</section>
 

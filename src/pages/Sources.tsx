@@ -7,6 +7,8 @@ import {
 	type SourceItem,
 } from '@/learning/sources'
 import { newsUnlockWeek, sourceContentUnlocked } from '@/learning/curriculum'
+import { saveGeneratedExercises } from '@/learning/generated-sentences'
+import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
 
 type SourceDiagnostics = {
@@ -33,10 +35,12 @@ type GeneratedPack = {
 		action: string
 	}>
 	cached?: boolean
+	savedCount?: number
 }
 
 export default function Sources() {
-	const { programWeek } = useSettings()
+	const { userId } = useAuth()
+	const { programWeek, targetLevel } = useSettings()
 	const [items, setItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [loading, setLoading] = useState(false)
 	const [packLoading, setPackLoading] = useState(false)
@@ -89,7 +93,30 @@ export default function Sources() {
 			})
 			if (!response.ok) throw new Error('pack unavailable')
 			const data = (await response.json()) as GeneratedPack
-			setGeneratedPack(data)
+			const saved = await saveGeneratedExercises(
+				userId,
+				data.exercises.map((exercise) => ({
+					...exercise,
+					phase: normaliseGeneratedPhase(exercise.phase),
+					tags: ['source', 'news', activePrompt.topic],
+					phraseFamily: 'Source conversation',
+					communicativeGoal: 'Turn source input into one usable spoken sentence.',
+					spokenCue: 'Say the idea aloud once before typing.',
+					repairPrompts: [exercise.promptEnglish],
+					construction: `source:${exercise.action}`,
+				})),
+				{
+					targetLevel,
+					programWeek,
+					sentenceLength: 'long',
+					sceneId: 'piazza-newsstand',
+					sceneTitle: 'Piazza Newsstand',
+					action: 'Summarise',
+					provider: 'fallback',
+					packId: data.id,
+				}
+			)
+			setGeneratedPack({ ...data, savedCount: saved.length })
 		} catch {
 			setGeneratedPack({
 				id: `fallback-${activePrompt.id}`,
@@ -111,6 +138,7 @@ export default function Sources() {
 					},
 				],
 				cached: false,
+				savedCount: 0,
 			})
 		} finally {
 			setPackLoading(false)
@@ -167,7 +195,11 @@ export default function Sources() {
 							<p className="eyebrow">{generatedPack.sourceName}</p>
 							<h2>{generatedPack.cached ? 'Cached drill pack' : 'Drill pack'}</h2>
 						</div>
-						<span>{generatedPack.exercises.length} production drills</span>
+						<span>
+							{generatedPack.savedCount
+								? `${generatedPack.savedCount} added to practice`
+								: `${generatedPack.exercises.length} production drills`}
+						</span>
 					</div>
 					<div className="article-choice-grid">
 						{generatedPack.exercises.map((exercise, index) => (
@@ -312,6 +344,20 @@ export default function Sources() {
 
 function isVideoItem(item: SourceItem) {
 	return item.id.startsWith('youtube-') && Boolean(item.embedUrl)
+}
+
+function normaliseGeneratedPhase(
+	value: string
+): 'warmup' | 'produce' | 'repair' | 'speak' {
+	if (
+		value === 'warmup' ||
+		value === 'produce' ||
+		value === 'repair' ||
+		value === 'speak'
+	) {
+		return value
+	}
+	return 'produce'
 }
 
 function getYoutubeSource() {

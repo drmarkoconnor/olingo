@@ -549,6 +549,10 @@ export async function getFluencySnapshot(userId: string) {
 	const logs = await db.exerciseLogs.where('userId').equals(userId).toArray()
 	const mistakes = await db.mistakes.where('userId').equals(userId).toArray()
 	const misspellings = await db.misspellings.where('userId').equals(userId).toArray()
+	const pronunciationAttempts = await db.pronunciationAttempts
+		.where('userId')
+		.equals(userId)
+		.toArray()
 	const total = logs.length
 	const correct = logs.filter((log) => log.correct).length
 	const averageMs = total
@@ -557,6 +561,16 @@ export async function getFluencySnapshot(userId: string) {
 	const repaired = mistakes.filter((mistake) => mistake.status === 'repaired').length
 	const spokenFirst = logs.filter((log) => log.spokenFirst).length
 	const communicative = logs.filter((log) => log.communicative ?? log.correct).length
+	const sortedPronunciation = pronunciationAttempts.sort(
+		(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+	)
+	const latestPronunciation = sortedPronunciation[0]
+	const averagePronunciationScore = pronunciationAttempts.length
+		? Math.round(
+				pronunciationAttempts.reduce((sum, item) => sum + item.score, 0) /
+					pronunciationAttempts.length
+		  )
+		: 0
 	const categoryErrors = new Map<string, number>()
 	const phraseFamilies = new Map<string, { total: number; communicative: number }>()
 	const phaseCounts = new Map<string, number>()
@@ -593,6 +607,9 @@ export async function getFluencySnapshot(userId: string) {
 			0
 		),
 		wordBankHints: logs.filter((log) => log.wordBankUsed).length,
+		pronunciationAttempts: pronunciationAttempts.length,
+		latestPronunciationScore: latestPronunciation?.score ?? null,
+		averagePronunciationScore,
 		topMisspellings: misspellings
 			.sort((a, b) => b.count - a.count)
 			.slice(0, 5)

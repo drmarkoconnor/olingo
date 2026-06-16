@@ -1,3 +1,4 @@
+import { Volume2 } from 'lucide-react'
 import { Word } from '@/storage/db'
 import { useSettings } from '@/store/useSettings'
 import { speak, canTTS } from '@/lib/tts'
@@ -51,7 +52,8 @@ export default function Flashcard({ card, flipped, onFlip }: Props) {
 										e.stopPropagation()
 										speak(word.italian, 'it-IT')
 									}}>
-									▶️ Hear it
+									<Volume2 size={18} />
+									AI model
 								</button>
 							</div>
 						)}
@@ -61,4 +63,3 @@ export default function Flashcard({ card, flipped, onFlip }: Props) {
 		</div>
 	)
 }
-
