@@ -304,3 +304,7 @@ export default async (req: Request) => {
 	await writeCachedSources(payload)
 	return Response.json(payload)
 }
+
+export const config = {
+	path: '/api/italian-sources',
+}
