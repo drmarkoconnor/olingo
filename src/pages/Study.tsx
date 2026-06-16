@@ -85,6 +85,12 @@ type SourceDiagnostics = {
 	}
 }
 
+type TransferFeedback = EvaluationResult & {
+	grammarScore?: number
+	complexityScore?: number
+	provider?: 'openai' | 'deterministic'
+}
+
 function shuffleWords(words: string[]) {
 	return [...words].sort(() => Math.random() - 0.5)
 }
@@ -146,6 +152,9 @@ export default function Study() {
 		useState<SourceDiagnostics | null>()
 	const [sourceLoading, setSourceLoading] = useState(false)
 	const [sourceReflection, setSourceReflection] = useState('')
+	const [transferFeedback, setTransferFeedback] = useState<TransferFeedback | null>(null)
+	const [transferLoading, setTransferLoading] = useState(false)
+	const [transferError, setTransferError] = useState<string | null>(null)
 	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 
 	useEffect(() => {
@@ -210,6 +219,10 @@ export default function Study() {
 			setPronunciationError(null)
 			setPronunciationLoading(false)
 			setSpokenFirst(false)
+			setSourceReflection('')
+			setTransferFeedback(null)
+			setTransferError(null)
+			setTransferLoading(false)
 		}
 		load()
 			.catch(console.error)
@@ -436,10 +449,21 @@ export default function Study() {
 				method: 'POST',
 				body: form,
 			})
-			const data = await response.json().catch(() => null)
+			const text = await response.text()
+			const data = text
+				? (() => {
+						try {
+							return JSON.parse(text)
+						} catch {
+							return { error: text.slice(0, 180) }
+						}
+				  })()
+				: null
 			if (!response.ok) {
 				throw new Error(
-					data?.message ?? data?.error ?? 'Pronunciation score unavailable'
+					data?.message ??
+						data?.error ??
+						`Pronunciation score unavailable (${response.status})`
 				)
 			}
 			setPronunciationFeedback(data as PronunciationFeedback)
@@ -486,6 +510,75 @@ export default function Study() {
 	function hearPronunciationPassage() {
 		if (!canTTS()) return
 		speak(pronunciationPassage.text, 'it-IT')
+	}
+
+	async function assessTransferSentence() {
+		const answer = sourceReflection.trim()
+		if (!answer || transferLoading) return null
+		setTransferLoading(true)
+		setTransferError(null)
+		try {
+			const response = await fetch('/api/evaluate-transfer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sourceItem: transferSource,
+					answer,
+					level: targetLevel,
+					programWeek,
+				}),
+			})
+			const text = await response.text()
+			const data = text
+				? (() => {
+						try {
+							return JSON.parse(text)
+						} catch {
+							return { error: text.slice(0, 180) }
+						}
+				  })()
+				: null
+			if (!response.ok) {
+				throw new Error(
+					data?.message ??
+						data?.error ??
+						`Transfer sentence could not be checked (${response.status})`
+				)
+			}
+			setTransferFeedback(data as TransferFeedback)
+			return data as TransferFeedback
+		} catch (error) {
+			setTransferError(
+				error instanceof Error
+					? error.message
+					: 'Transfer sentence could not be checked'
+			)
+			return null
+		} finally {
+			setTransferLoading(false)
+		}
+	}
+
+	async function completeTransferActivity(item: DailySessionItem, allowUnscored = false) {
+		if (!sourceReflection.trim()) return
+		if (!transferFeedback && !allowUnscored) {
+			await assessTransferSentence()
+			return
+		}
+		await recordUnit(item, {
+			activeMs: Date.now() - unitStartedAt,
+			success: transferFeedback?.communicative ?? true,
+			mistake: transferFeedback ? !transferFeedback.accepted : false,
+			tags: transferFeedback?.errorTags.length
+				? transferFeedback.errorTags
+				: [
+						...sourceTags(transferSource),
+						...(transferFeedback ? [] : ['unscored-transfer']),
+				  ],
+		})
+		setSourceReflection('')
+		setTransferFeedback(null)
+		setTransferError(null)
 	}
 
 	function revealHint() {
@@ -703,18 +796,22 @@ export default function Study() {
 					{activeItem?.type === 'transfer' && (
 						<TransferActivity
 							diagnostics={sourceDiagnostics}
+							error={transferError}
+							feedback={transferFeedback}
 							item={transferSource}
+							checking={transferLoading}
 							loading={sourceLoading}
 							reflection={sourceReflection}
+							onAssess={assessTransferSentence}
 							onComplete={() =>
-								recordUnit(activeItem, {
-									activeMs: Date.now() - unitStartedAt,
-									success: true,
-									tags: sourceTags(transferSource),
-								})
+								completeTransferActivity(activeItem, Boolean(transferError))
 							}
 							onRefresh={loadSources}
-							onReflection={setSourceReflection}
+							onReflection={(value) => {
+								setSourceReflection(value)
+								setTransferFeedback(null)
+								setTransferError(null)
+							}}
 						/>
 					)}
 				</ActivityShell>
@@ -1444,17 +1541,25 @@ function PronunciationActivity({
 }
 
 function TransferActivity({
+	checking,
 	diagnostics,
+	error,
+	feedback,
 	item,
 	loading,
+	onAssess,
 	onComplete,
 	onRefresh,
 	onReflection,
 	reflection,
 }: {
+	checking: boolean
 	diagnostics: SourceDiagnostics | null | undefined
+	error: string | null
+	feedback: TransferFeedback | null
 	item: SourceItem
 	loading: boolean
+	onAssess: () => void
 	onComplete: () => void
 	onRefresh: () => void
 	onReflection: (value: string) => void
@@ -1494,9 +1599,48 @@ function TransferActivity({
 			<textarea
 				value={reflection}
 				onChange={(event) => onReflection(event.target.value)}
-				placeholder="Optional: write one Italian phrase you could say about it..."
+				disabled={Boolean(feedback)}
+				placeholder="Write one Italian sentence about it..."
 				rows={3}
 			/>
+			{error && (
+				<div className="feedback feedback-repair">
+					<strong>Sentence check unavailable</strong>
+					<span className="feedback-note">{error}</span>
+				</div>
+			)}
+			{feedback && (
+				<div
+					className={
+						feedback.communicative
+							? 'feedback feedback-communicative'
+							: 'feedback feedback-repair'
+					}>
+					<strong>{feedback.shortFeedback}</strong>
+					<p>{feedback.correctedItalian}</p>
+					<div className="pronunciation-scores">
+						<div>
+							<strong>{feedback.grammarScore ?? 0}%</strong>
+							<span>grammar</span>
+						</div>
+						<div>
+							<strong>{feedback.complexityScore ?? 0}%</strong>
+							<span>complexity</span>
+						</div>
+						<div>
+							<strong>{Math.round((feedback.confidence ?? 0) * 100)}%</strong>
+							<span>confidence</span>
+						</div>
+					</div>
+					{feedback.errorTags.length > 0 && (
+						<div className="tag-row">
+							{feedback.errorTags.map((tag) => (
+								<span key={tag}>{tag}</span>
+							))}
+						</div>
+					)}
+				</div>
+			)}
 			<div className="control-bar">
 				<a className="btn btn-secondary" href={item.link} target="_blank" rel="noreferrer">
 					<ExternalLink size={18} />
@@ -1506,10 +1650,21 @@ function TransferActivity({
 					<RotateCcw size={18} />
 					{loading ? 'Refreshing' : 'Refresh'}
 				</button>
-				<button className="btn btn-primary" type="button" onClick={onComplete}>
-					<CheckCircle2 size={18} />
-					Complete transfer
-				</button>
+				{feedback || error ? (
+					<button className="btn btn-primary" type="button" onClick={onComplete}>
+						<CheckCircle2 size={18} />
+						{feedback ? 'Complete transfer' : 'Complete without score'}
+					</button>
+				) : (
+					<button
+						className="btn btn-primary"
+						type="button"
+						disabled={!reflection.trim() || checking}
+						onClick={onAssess}>
+						<CheckCircle2 size={18} />
+						{checking ? 'Checking' : 'Check sentence'}
+					</button>
+				)}
 			</div>
 		</div>
 	)

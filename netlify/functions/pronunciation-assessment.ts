@@ -215,48 +215,58 @@ async function assessWithOpenAI(payload: {
 }
 
 export default async (req: Request) => {
-	if (req.method !== 'POST') return methodNotAllowed()
-	const auth = await requireUser()
-	if (authFailed(auth)) return auth.response
+	try {
+		if (req.method !== 'POST') return methodNotAllowed()
+		const auth = await requireUser()
+		if (authFailed(auth)) return auth.response
 
-	const form = await req.formData()
-	const audio = form.get('audio')
-	const passageId = String(form.get('passageId') || 'passage')
-	const expectedText = String(form.get('expectedText') || '')
-	if (!(audio instanceof File) || !expectedText.trim()) {
-		return json({ error: 'Missing audio or expected text' }, { status: 400 })
-	}
-	if (audio.size > 10 * 1024 * 1024) {
-		return json({ error: 'Audio recording is too large' }, { status: 413 })
-	}
-
-	const apiKey = getEnv('OPENAI_API_KEY')
-	const transcript = apiKey ? await transcribeAudio(audio, apiKey, expectedText) : ''
-	const fallback = deterministicFeedback(expectedText, transcript)
-	const ai = await assessWithOpenAI({
-		expectedText,
-		passageId,
-		transcript,
-		fallback,
-	})
-	const result = ai ?? fallback
-	const payload = {
-		...result,
-		provider: ai ? 'openai' : 'deterministic',
-		passageId,
-		createdAt: new Date().toISOString(),
-	}
-
-	const store = getStore({ name: 'pronunciation-ledger' })
-	await store.setJSON(
-		`users/${encodeURIComponent(auth.user.id)}/${payload.createdAt}-${encodeURIComponent(passageId)}`,
-		{
-			userId: auth.user.id,
-			...payload,
+		const form = await req.formData()
+		const audio = form.get('audio')
+		const passageId = String(form.get('passageId') || 'passage')
+		const expectedText = String(form.get('expectedText') || '')
+		if (!(audio instanceof File) || !expectedText.trim()) {
+			return json({ error: 'Missing audio or expected text' }, { status: 400 })
 		}
-	)
+		if (audio.size > 10 * 1024 * 1024) {
+			return json({ error: 'Audio recording is too large' }, { status: 413 })
+		}
 
-	return json(payload)
+		const apiKey = getEnv('OPENAI_API_KEY')
+		const transcript = apiKey ? await transcribeAudio(audio, apiKey, expectedText) : ''
+		const fallback = deterministicFeedback(expectedText, transcript)
+		const ai = await assessWithOpenAI({
+			expectedText,
+			passageId,
+			transcript,
+			fallback,
+		})
+		const result = ai ?? fallback
+		const payload = {
+			...result,
+			provider: ai ? 'openai' : 'deterministic',
+			passageId,
+			createdAt: new Date().toISOString(),
+		}
+
+		const store = getStore({ name: 'pronunciation-ledger' })
+		await store.setJSON(
+			`users/${encodeURIComponent(auth.user.id)}/${payload.createdAt}-${encodeURIComponent(passageId)}`,
+			{
+				userId: auth.user.id,
+				...payload,
+			}
+		)
+
+		return json(payload)
+	} catch (error) {
+		return json(
+			{
+				error: 'Pronunciation score unavailable',
+				message: error instanceof Error ? error.message : String(error),
+			},
+			{ status: 500 }
+		)
+	}
 }
 
 export const config = {
