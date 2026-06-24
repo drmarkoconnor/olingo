@@ -121,6 +121,24 @@ function hasNearDuplicate(value: string, existing: string[]) {
 	return existing.some((item) => tokenSimilarity(value, item) >= 0.9)
 }
 
+function filterNearDuplicateGeneratedItems(items: GeneratedExerciseItem[]) {
+	const seenItalian: string[] = []
+	const seenEnglish: string[] = []
+	return items.filter((item) => {
+		const italian = normaliseSentence(item.targetItalian)
+		const english = normaliseSentence(item.promptEnglish)
+		if (
+			hasNearDuplicate(italian, seenItalian) ||
+			hasNearDuplicate(english, seenEnglish)
+		) {
+			return false
+		}
+		seenItalian.push(italian)
+		seenEnglish.push(english)
+		return true
+	})
+}
+
 export function sentenceContentHash(promptEnglish: string, targetItalian: string) {
 	return simpleHash(
 		`${normaliseSentence(promptEnglish)}::${normaliseSentence(targetItalian)}`
@@ -174,10 +192,11 @@ export async function loadGeneratedExercises(userId: string) {
 		.equals(userId)
 		.and((exercise) => exercise.retired !== 1)
 		.toArray()
-	return items.sort(
+	const sorted = items.sort(
 		(a, b) =>
 			new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
 	)
+	return filterNearDuplicateGeneratedItems(sorted)
 }
 
 export async function loadSeenProductionExerciseIds(userId: string) {
