@@ -29,6 +29,14 @@ export type UnitResult = {
 	tags?: string[]
 }
 
+export type DailySessionProgress = {
+	planned: number
+	completed: number
+	totalCompleted: number
+	bonus: number
+	percent: number
+}
+
 function unique(values: string[]) {
 	return Array.from(new Set(values.filter(Boolean)))
 }
@@ -157,15 +165,15 @@ async function reconcileSessionDefinitions(
 		),
 	]
 
-	const completedCount = mergedItems.reduce(
-		(total, item) => total + Math.min(item.completedCount, item.targetCount),
+	const totalCompleted = mergedItems.reduce(
+		(total, item) => total + item.completedCount,
 		0
 	)
 	const allComplete = mergedItems.every((item) => item.status === 'complete')
 	const updatedSession: DailySession = {
 		...session,
 		plannedCount: mergedItems.reduce((total, item) => total + item.targetCount, 0),
-		completedCount,
+		completedCount: totalCompleted,
 		status: allComplete ? 'complete' : 'active',
 		updatedAt: now,
 		completedAt: allComplete ? session.completedAt ?? now : null,
@@ -261,10 +269,18 @@ export function getDailySessionProgress(items: DailySessionItem[]) {
 		(total, item) => total + Math.min(item.completedCount, item.targetCount),
 		0
 	)
+	const totalCompleted = items.reduce(
+		(total, item) => total + item.completedCount,
+		0
+	)
 	return {
 		planned,
 		completed,
-		percent: planned ? Math.round((completed / planned) * 100) : 0,
+		totalCompleted,
+		bonus: Math.max(0, totalCompleted - planned),
+		percent: planned
+			? Math.min(100, Math.round((completed / planned) * 100))
+			: 0,
 	}
 }
 
@@ -278,7 +294,7 @@ export async function completeDailySessionUnit(
 	if (!session) throw new Error('Daily session not found')
 
 	const activeMs = Math.max(0, Math.round(result.activeMs ?? 0))
-	const completedCount = Math.min(item.targetCount, item.completedCount + 1)
+	const completedCount = item.completedCount + 1
 	const itemComplete = completedCount >= item.targetCount
 	const now = new Date().toISOString()
 	const successIncrement = result.success ? 1 : 0
@@ -294,20 +310,19 @@ export async function completeDailySessionUnit(
 		status: itemComplete ? 'complete' : 'active',
 		tags,
 		startedAt: item.startedAt ?? now,
-		completedAt: itemComplete ? now : item.completedAt ?? null,
+		completedAt: itemComplete ? item.completedAt ?? now : item.completedAt ?? null,
 	}
 
 	await db.dailySessionItems.put(updatedItem)
 	const items = await loadDailySessionItems(item.sessionId)
-	const completed = items.reduce(
-		(total, current) =>
-			total + Math.min(current.completedCount, current.targetCount),
+	const totalCompleted = items.reduce(
+		(total, current) => total + current.completedCount,
 		0
 	)
 	const allComplete = items.every((current) => current.status === 'complete')
 	const updatedSession: DailySession = {
 		...session,
-		completedCount: completed,
+		completedCount: totalCompleted,
 		successCount: session.successCount + successIncrement,
 		mistakeCount: session.mistakeCount + mistakeIncrement,
 		activeMs: session.activeMs + activeMs,

@@ -63,6 +63,8 @@ describe('daily session planning', () => {
 		expect(getDailySessionProgress(first.items)).toEqual({
 			planned: 21,
 			completed: 0,
+			totalCompleted: 0,
+			bonus: 0,
 			percent: 0,
 		})
 	})
@@ -124,5 +126,52 @@ describe('daily session planning', () => {
 		expect(bundle.session.status).toBe('complete')
 		expect(bundle.session.completedCount).toBe(bundle.session.plannedCount)
 		expect(bundle.session.completedAt).toBeTruthy()
+	})
+
+	it('continues recording bonus units after the required finish line', async () => {
+		let bundle = await getOrCreateDailySession(
+			userId,
+			{
+				programWeek: 1,
+				dailyGoal: 30,
+				vocabularyCount: 1,
+				sentenceCount: 1,
+				repairCount: 0,
+			},
+			'2026-06-14'
+		)
+
+		for (const item of bundle.items) {
+			for (let index = 0; index < item.targetCount; index += 1) {
+				bundle = await completeDailySessionUnit(item.id, {
+					activeMs: 500,
+					success: true,
+				})
+			}
+		}
+
+		const sentence = bundle.items.find((item) => item.type === 'sentence')!
+		const afterBonus = await completeDailySessionUnit(sentence.id, {
+			activeMs: 1200,
+			success: true,
+			tags: ['bonus'],
+		})
+		const bonusSentence = afterBonus.items.find(
+			(item) => item.type === 'sentence'
+		)!
+		const progress = getDailySessionProgress(afterBonus.items)
+
+		expect(afterBonus.session.status).toBe('complete')
+		expect(afterBonus.session.completedCount).toBe(
+			afterBonus.session.plannedCount + 1
+		)
+		expect(afterBonus.session.activeMs).toBe(3700)
+		expect(bonusSentence.completedCount).toBe(bonusSentence.targetCount + 1)
+		expect(progress).toMatchObject({
+			completed: afterBonus.session.plannedCount,
+			totalCompleted: afterBonus.session.plannedCount + 1,
+			bonus: 1,
+			percent: 100,
+		})
 	})
 })

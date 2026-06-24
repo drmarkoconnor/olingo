@@ -36,6 +36,7 @@ import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
 import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
 import {
 	completeDailySessionUnit,
+	type DailySessionProgress,
 	getActiveDailyItem,
 	getDailySessionProgress,
 	getOrCreateDailySession,
@@ -114,6 +115,18 @@ function formatDuration(ms: number) {
 	return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
+function itemBonusCount(item: DailySessionItem) {
+	return Math.max(0, item.completedCount - item.targetCount)
+}
+
+function itemCountLabel(item: DailySessionItem) {
+	const required = `${Math.min(item.completedCount, item.targetCount)} / ${
+		item.targetCount
+	}`
+	const bonus = itemBonusCount(item)
+	return bonus ? `${required} + ${bonus}` : required
+}
+
 function isVideoItem(item: SourceItem) {
 	return item.id.startsWith('youtube-') && Boolean(item.embedUrl)
 }
@@ -157,6 +170,7 @@ export default function Study() {
 	const [pronunciationLoading, setPronunciationLoading] = useState(false)
 	const [pronunciationError, setPronunciationError] = useState<string | null>(null)
 	const [pronunciationAttempted, setPronunciationAttempted] = useState(false)
+	const [bonusPractice, setBonusPractice] = useState(false)
 	const [unitStartedAt, setUnitStartedAt] = useState(Date.now())
 	const [sourceItems, setSourceItems] = useState<SourceItem[]>(fallbackSourceItems)
 	const [sourceDiagnostics, setSourceDiagnostics] =
@@ -234,6 +248,7 @@ export default function Study() {
 			setTransferFeedback(null)
 			setTransferError(null)
 			setTransferLoading(false)
+			setBonusPractice(false)
 		}
 		load()
 			.catch(console.error)
@@ -266,10 +281,26 @@ export default function Study() {
 	const pronunciationActivity = sessionItems.find(
 		(item) => item.type === 'pronunciation'
 	)
-	const currentSentenceIndex = Math.min(
-		sentenceActivity?.completedCount ?? 0,
-		Math.max(0, sentenceQueue.length - 1)
+	const bonusPracticeActive = Boolean(
+		bonusPractice && !activeItem && sentenceActivity && sentenceQueue.length
 	)
+	const activeSessionItem =
+		bonusPracticeActive && sentenceActivity
+			? {
+					...sentenceActivity,
+					label: 'Bonus sentence practice',
+					status: 'active' as const,
+			  }
+			: activeItem
+	const currentSentenceIndex =
+		sentenceQueue.length && sentenceActivity
+			? bonusPracticeActive
+				? sentenceActivity.completedCount % sentenceQueue.length
+				: Math.min(
+						sentenceActivity.completedCount,
+						Math.max(0, sentenceQueue.length - 1)
+				  )
+			: 0
 	const current = sentenceQueue[currentSentenceIndex]
 	const currentMistake = repairMistakes[
 		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
@@ -616,6 +647,17 @@ export default function Study() {
 		speak(current.exercise.targetItalian, 'it-IT')
 	}
 
+	function continueBonusPractice() {
+		setBonusPractice(true)
+		setFeedback(null)
+		setAnswer('')
+		setHintsRevealed(0)
+		setWordBankVisible(false)
+		setWordBankUsed(false)
+		setSpokenFirst(false)
+		setUnitStartedAt(Date.now())
+	}
+
 	if (loading) {
 		return (
 			<div className="today-shell">
@@ -628,12 +670,13 @@ export default function Study() {
 		)
 	}
 
-	if (session && !activeItem) {
+	if (session && !activeItem && !bonusPracticeActive) {
 		return (
 			<CompletionScreen
 				session={session}
 				items={sessionItems}
 				advice={revisionAdvice}
+				onContinue={continueBonusPractice}
 			/>
 		)
 	}
@@ -661,7 +704,7 @@ export default function Study() {
 						<h2>{stage.title}</h2>
 						<p>{stage.goals.slice(0, 3).join(' - ')}</p>
 					</div>
-					<SessionChecklist items={sessionItems} activeItem={activeItem} />
+					<SessionChecklist items={sessionItems} activeItem={activeSessionItem} />
 					<a
 						className="photo-credit"
 						href={scene.photoUrl}
@@ -682,11 +725,14 @@ export default function Study() {
 
 				<div className="curriculum-card daily-contract">
 					<div>
-						<span>Current focus</span>
-						<strong>{stage.title}</strong>
+						<span>{bonusPracticeActive ? 'Bonus practice' : 'Current focus'}</span>
+						<strong>
+							{bonusPracticeActive ? 'Keep building fast sentences' : stage.title}
+						</strong>
 					</div>
 					<p>
-						{progress.completed} of {progress.planned} required activities done.
+						{progress.completed} of {progress.planned} required activities done
+						{progress.bonus ? `, plus ${progress.bonus} bonus rep(s).` : '.'}
 					</p>
 				</div>
 
@@ -724,13 +770,13 @@ export default function Study() {
 					</div>
 				</div>
 
-				<ActivityShell item={activeItem}>
-					{activeItem?.type === 'match' && (
+				<ActivityShell item={activeSessionItem}>
+					{activeSessionItem?.type === 'match' && (
 						<GuidedVocabularyMatch
 							vocabulary={vocabulary}
-							item={activeItem}
+							item={activeSessionItem}
 							onUnitComplete={(success) =>
-								recordUnit(activeItem, {
+								recordUnit(activeSessionItem, {
 									activeMs: Date.now() - unitStartedAt,
 									success,
 									mistake: !success,
@@ -740,12 +786,12 @@ export default function Study() {
 						/>
 					)}
 
-					{activeItem?.type === 'recall' && (
+					{activeSessionItem?.type === 'recall' && (
 						<GuidedRecallCards
 							vocabulary={vocabulary}
-							item={activeItem}
+							item={activeSessionItem}
 							onUnitComplete={(success) =>
-								recordUnit(activeItem, {
+								recordUnit(activeSessionItem, {
 									activeMs: Date.now() - unitStartedAt,
 									success,
 									mistake: !success,
@@ -755,7 +801,7 @@ export default function Study() {
 						/>
 					)}
 
-					{activeItem?.type === 'sentence' && current && (
+					{activeSessionItem?.type === 'sentence' && current && (
 						<SentenceBuilder
 							answer={answer}
 							current={current}
@@ -778,7 +824,7 @@ export default function Study() {
 						/>
 					)}
 
-					{activeItem?.type === 'repair' && currentMistake && (
+					{activeSessionItem?.type === 'repair' && currentMistake && (
 						<DailyRepair
 							answer={repairAnswer}
 							feedback={repairFeedback}
@@ -789,7 +835,7 @@ export default function Study() {
 						/>
 					)}
 
-					{activeItem?.type === 'pronunciation' && (
+					{activeSessionItem?.type === 'pronunciation' && (
 						<PronunciationActivity
 							error={pronunciationError}
 							feedback={pronunciationFeedback}
@@ -806,7 +852,7 @@ export default function Study() {
 						/>
 					)}
 
-					{activeItem?.type === 'transfer' && (
+					{activeSessionItem?.type === 'transfer' && (
 						<TransferActivity
 							diagnostics={sourceDiagnostics}
 							error={transferError}
@@ -817,7 +863,7 @@ export default function Study() {
 							reflection={sourceReflection}
 							onAssess={assessTransferSentence}
 							onComplete={() =>
-								completeTransferActivity(activeItem, Boolean(transferError))
+								completeTransferActivity(activeSessionItem, Boolean(transferError))
 							}
 							onRefresh={loadSources}
 							onReflection={(value) => {
@@ -831,9 +877,19 @@ export default function Study() {
 
 				<div className="micro-stats">
 					<div>
+						<Target size={16} />
+						<span>{progress.totalCompleted} question(s) answered</span>
+					</div>
+					<div>
 						<Sparkles size={16} />
 						<span>{formatDuration(session?.activeMs ?? 0)} answering time</span>
 					</div>
+					{progress.bonus > 0 && (
+						<div>
+							<Play size={16} />
+							<span>{progress.bonus} bonus rep(s)</span>
+						</div>
+					)}
 					<div>
 						<RotateCcw size={16} />
 						<span>{session?.mistakeCount ?? 0} repair signal(s)</span>
@@ -853,7 +909,7 @@ function SessionProgressHeader({
 	activeMs: number
 	dailyGoal: number
 	dateKey: string
-	progress: { planned: number; completed: number; percent: number }
+	progress: DailySessionProgress
 }) {
 	return (
 		<div className="sprint-header guided-header">
@@ -864,7 +920,8 @@ function SessionProgressHeader({
 				</p>
 				<h1>Today&apos;s finish line</h1>
 				<p className="progress-copy">
-					{progress.completed} of {progress.planned} activities -{' '}
+					{progress.completed} of {progress.planned} required activities
+					{progress.bonus ? `, plus ${progress.bonus} bonus` : ''} -{' '}
 					{formatDuration(activeMs)} active answering
 				</p>
 			</div>
@@ -906,10 +963,7 @@ function SessionChecklist({
 					</span>
 					<div>
 						<strong>{item.label}</strong>
-						<small>
-							{Math.min(item.completedCount, item.targetCount)} /{' '}
-							{item.targetCount}
-						</small>
+						<small>{itemCountLabel(item)}</small>
 					</div>
 				</div>
 			))}
@@ -932,9 +986,7 @@ function ActivityShell({
 					<p className="eyebrow">Up next</p>
 					<h2>{sessionActivityLabels[item.type]}</h2>
 				</div>
-				<span>
-					{Math.min(item.completedCount, item.targetCount)} / {item.targetCount}
-				</span>
+				<span>{itemCountLabel(item)}</span>
 			</div>
 			{children}
 		</div>
@@ -1180,9 +1232,7 @@ function GuidedVocabularyMatch({
 		<div className="answer-card">
 			<label>Match Italian to English</label>
 			<div className="match-score">
-				<span>
-					{Math.min(item.completedCount, item.targetCount)} / {item.targetCount}
-				</span>
+				<span>{itemCountLabel(item)}</span>
 			</div>
 			<div className="match-board">
 				<div className="match-column">
@@ -1700,25 +1750,45 @@ function TransferActivity({
 function CompletionScreen({
 	advice,
 	items,
+	onContinue,
 	session,
 }: {
 	advice: string[]
 	items: DailySessionItem[]
+	onContinue: () => void
 	session: DailySession
 }) {
+	const requiredCompleted = items.reduce(
+		(total, item) => total + Math.min(item.completedCount, item.targetCount),
+		0
+	)
+	const totalCompleted = items.reduce(
+		(total, item) => total + item.completedCount,
+		0
+	)
+	const bonus = Math.max(0, totalCompleted - session.plannedCount)
+
 	return (
 		<div className="completion-screen daily-complete">
 			<div className="completion-badge">
 				<Check size={38} />
 			</div>
-			<p className="eyebrow">Daily Session Complete</p>
-			<h2>Good, you have finished for today.</h2>
+			<p className="eyebrow">Daily Minimum Complete</p>
+			<h2>Good, you have finished the minimum for today.</h2>
+			<p className="completion-note">
+				You can stop here, or keep building sentences. Extra practice is counted
+				as bonus work.
+			</p>
 			<div className="completion-summary">
 				<div>
 					<strong>
-						{session.completedCount}/{session.plannedCount}
+						{requiredCompleted}/{session.plannedCount}
 					</strong>
-					<span>activities</span>
+					<span>required</span>
+				</div>
+				<div>
+					<strong>{bonus}</strong>
+					<span>bonus reps</span>
 				</div>
 				<div>
 					<strong>{session.successCount}</strong>
@@ -1738,9 +1808,7 @@ function CompletionScreen({
 				{items.map((item) => (
 					<div className="metric-row" key={item.id}>
 						<span>{item.label}</span>
-						<strong>
-							{item.completedCount}/{item.targetCount}
-						</strong>
+						<strong>{itemCountLabel(item)}</strong>
 					</div>
 				))}
 			</div>
@@ -1757,7 +1825,11 @@ function CompletionScreen({
 				)}
 			</div>
 			<div className="action-row">
-				<Link className="btn btn-primary" to="/sources">
+				<button className="btn btn-primary" type="button" onClick={onContinue}>
+					<Play size={18} />
+					Continue building sentences
+				</button>
+				<Link className="btn btn-secondary" to="/sources">
 					<BookOpen size={18} />
 					Continue lightly
 				</Link>
