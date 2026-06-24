@@ -127,6 +127,28 @@ function simpleHash(value: string) {
 	return (hash >>> 0).toString(36)
 }
 
+function normaliseSentence(value: string) {
+	return value
+		.trim()
+		.toLowerCase()
+		.normalize('NFC')
+		.replace(/[’']/g, ' ')
+		.replace(/[.,!?;:()]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+}
+
+function tokenSimilarity(a: string, b: string) {
+	const aTokens = new Set(a.split(' ').filter(Boolean))
+	const bTokens = new Set(b.split(' ').filter(Boolean))
+	if (!aTokens.size || !bTokens.size) return 0
+	let overlap = 0
+	for (const token of aTokens) {
+		if (bTokens.has(token)) overlap += 1
+	}
+	return overlap / Math.max(aTokens.size, bTokens.size)
+}
+
 function levelGuidance(level: CefrLevel) {
 	if (level === 'A1') {
 		return 'A1: present tense, essere/avere/fare, simple questions, family, routines, short direct sentences.'
@@ -157,36 +179,117 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 	const families = stage?.phraseFamilies?.length
 		? stage.phraseFamilies
 		: ['Generated sentence production']
+	const situations = [
+		{
+			en: 'at dinner with my family',
+			it: 'a cena con la mia famiglia',
+			person: 'mia figlia',
+			activity: 'preparare la pasta',
+			place: 'in cucina',
+			object: 'il tavolo',
+		},
+		{
+			en: 'before the football match',
+			it: 'prima della partita',
+			person: 'mio fratello',
+			activity: 'guardare la partita',
+			place: 'al bar',
+			object: 'i biglietti',
+		},
+		{
+			en: 'during a coffee with friends',
+			it: 'durante un caffe con amici',
+			person: 'la mia amica',
+			activity: 'prendere un caffe',
+			place: 'in centro',
+			object: 'il conto',
+		},
+		{
+			en: 'after a family visit',
+			it: 'dopo una visita in famiglia',
+			person: 'mia madre',
+			activity: 'fare una passeggiata',
+			place: 'nel parco',
+			object: 'la borsa',
+		},
+		{
+			en: 'at a small cultural event',
+			it: 'a un piccolo evento culturale',
+			person: 'il gruppo',
+			activity: 'ascoltare la musica',
+			place: 'in piazza',
+			object: 'il programma',
+		},
+		{
+			en: 'while choosing food',
+			it: 'mentre scegliamo da mangiare',
+			person: 'il cameriere',
+			activity: 'ordinare qualcosa',
+			place: 'al ristorante',
+			object: 'il menu',
+		},
+	]
 	const templates = [
-		{
-			en: 'I want to speak more calmly today.',
-			it: 'Oggi voglio parlare con piu calma.',
+		(s: (typeof situations)[number]) => ({
+			en: `I want to speak more calmly ${s.en}.`,
+			it: `Voglio parlare con piu calma ${s.it}.`,
 			construction: 'modal-infinitive',
-		},
-		{
-			en: 'Yesterday I had a small problem, but I solved it.',
-			it: 'Ieri ho avuto un piccolo problema, ma l ho risolto.',
-			construction: 'past-repair',
-		},
-		{
-			en: 'In my opinion, we should decide together.',
-			it: 'Secondo me, dovremmo decidere insieme.',
-			construction: 'opinion-modal',
-		},
-		{
-			en: 'Can you tell me what happened?',
-			it: 'Puoi dirmi che cosa e successo?',
-			construction: 'question-past',
-		},
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `Can I help ${s.person} ${s.en}?`,
+			it: `Posso aiutare ${s.person} ${s.it}?`,
+			construction: 'modal-question',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `I have to ${s.activity} before we leave.`,
+			it: `Devo ${s.activity} prima di partire.`,
+			construction: 'dovere-infinitive',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `Yesterday I saw ${s.person} ${s.en}.`,
+			it: `Ieri ho visto ${s.person} ${s.it}.`,
+			construction: 'past-event',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `In my opinion, this is a good idea ${s.en}.`,
+			it: `Secondo me, questa e una buona idea ${s.it}.`,
+			construction: 'opinion-frame',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `Can you tell me where ${s.object} is?`,
+			it: `Puoi dirmi dove si trova ${s.object}?`,
+			construction: 'question-place',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `I do not understand what happened ${s.en}.`,
+			it: `Non capisco che cosa e successo ${s.it}.`,
+			construction: 'repair-question',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `We can talk about it later ${s.en}.`,
+			it: `Possiamo parlarne piu tardi ${s.it}.`,
+			construction: 'modal-pronoun',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `I brought ${s.object} because it was useful.`,
+			it: `Ho portato ${s.object} perche era utile.`,
+			construction: 'past-reason',
+		}),
+		(s: (typeof situations)[number]) => ({
+			en: `I would like to understand the plan ${s.en}.`,
+			it: `Vorrei capire il programma ${s.it}.`,
+			construction: 'conditional-request',
+		}),
 	]
 
 	return Array.from({ length: count }, (_, index) => {
-		const base = templates[index % templates.length]
+		const situation = situations[index % situations.length]
+		const base = templates[index % templates.length](situation)
 		const verb = verbs[index % verbs.length]
 		const topic = topics[index % topics.length]
 		const phraseFamily = families[index % families.length]
 		return {
-			promptEnglish: `${base.en} (${topic})`,
+			promptEnglish: `${base.en} Use it in a ${topic} conversation.`,
 			targetItalian: base.it,
 			acceptedItalian: [base.it],
 			hints: [`Use ${verb} as your anchor verb.`, `Focus: ${base.construction}.`],
@@ -206,14 +309,24 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 
 function sanitizeExercises(exercises: GeneratedExercise[], count: number) {
 	const seen = new Set<string>()
+	const seenItalian: string[] = []
+	const seenEnglish: string[] = []
 	return exercises
 		.filter((exercise) => exercise.promptEnglish && exercise.targetItalian)
 		.filter((exercise) => {
-			const key = `${exercise.promptEnglish}::${exercise.targetItalian}`
-				.toLowerCase()
-				.replace(/\s+/g, ' ')
+			const english = normaliseSentence(exercise.promptEnglish)
+			const italian = normaliseSentence(exercise.targetItalian)
+			const key = `${english}::${italian}`
 			if (seen.has(key)) return false
+			if (
+				seenItalian.some((item) => tokenSimilarity(italian, item) >= 0.9) ||
+				seenEnglish.some((item) => tokenSimilarity(english, item) >= 0.9)
+			) {
+				return false
+			}
 			seen.add(key)
+			seenItalian.push(italian)
+			seenEnglish.push(english)
 			return true
 		})
 		.map((exercise) => ({

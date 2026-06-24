@@ -6,6 +6,7 @@ import {
 	recordPronunciationAttempt,
 } from '@/learning/pronunciation'
 import { db } from '@/storage/db'
+import { deterministicFeedback } from '../../netlify/functions/pronunciation-assessment'
 
 const userId = 'pronunciation-user'
 
@@ -51,5 +52,16 @@ describe('pronunciation records', () => {
 		expect(attempts).toHaveLength(1)
 		expect(attempts[0].score).toBe(94)
 		expect(attempts[0].passageId).toBe(passage.id)
+	})
+
+	it('does not inflate coverage when no transcript is available', () => {
+		const passage = getPronunciationPassage(1)
+		const feedback = deterministicFeedback(passage.text, '')
+
+		expect(feedback.transcript).toBe('')
+		expect(feedback.intelligibilityScore).toBe(0)
+		expect(feedback.passageCoverage).toBe(0)
+		expect(feedback.rhythmScore).toBe(0)
+		expect(feedback.shortFeedback).toContain('could not detect')
 	})
 })

@@ -106,6 +106,21 @@ function normaliseSentence(value: string) {
 		.trim()
 }
 
+function tokenSimilarity(a: string, b: string) {
+	const aTokens = new Set(a.split(' ').filter(Boolean))
+	const bTokens = new Set(b.split(' ').filter(Boolean))
+	if (!aTokens.size || !bTokens.size) return 0
+	let overlap = 0
+	for (const token of aTokens) {
+		if (bTokens.has(token)) overlap += 1
+	}
+	return overlap / Math.max(aTokens.size, bTokens.size)
+}
+
+function hasNearDuplicate(value: string, existing: string[]) {
+	return existing.some((item) => tokenSimilarity(value, item) >= 0.9)
+}
+
 export function sentenceContentHash(promptEnglish: string, targetItalian: string) {
 	return simpleHash(
 		`${normaliseSentence(promptEnglish)}::${normaliseSentence(targetItalian)}`
@@ -204,18 +219,16 @@ export async function saveGeneratedExercises(
 		.equals(userId)
 		.toArray()
 	const existingHashes = new Set(existing.map((item) => item.contentHash))
-	const existingItalian = new Set(
-		[
-			...exercises.map((exercise) => exercise.targetItalian),
-			...existing.map((item) => item.targetItalian),
-		].map(normaliseSentence)
-	)
-	const existingEnglish = new Set(
-		[
-			...exercises.map((exercise) => exercise.promptEnglish),
-			...existing.map((item) => item.promptEnglish),
-		].map(normaliseSentence)
-	)
+	const existingItalianList = [
+		...exercises.map((exercise) => exercise.targetItalian),
+		...existing.map((item) => item.targetItalian),
+	].map(normaliseSentence)
+	const existingEnglishList = [
+		...exercises.map((exercise) => exercise.promptEnglish),
+		...existing.map((item) => item.promptEnglish),
+	].map(normaliseSentence)
+	const existingItalian = new Set(existingItalianList)
+	const existingEnglish = new Set(existingEnglishList)
 	const items: GeneratedExerciseItem[] = []
 
 	for (const payload of payloads) {
@@ -227,9 +240,17 @@ export async function saveGeneratedExercises(
 		const italianKey = normaliseSentence(targetItalian)
 		const englishKey = normaliseSentence(promptEnglish)
 		if (existingItalian.has(italianKey) || existingEnglish.has(englishKey)) continue
+		if (
+			hasNearDuplicate(italianKey, existingItalianList) ||
+			hasNearDuplicate(englishKey, existingEnglishList)
+		) {
+			continue
+		}
 		existingHashes.add(contentHash)
 		existingItalian.add(italianKey)
 		existingEnglish.add(englishKey)
+		existingItalianList.push(italianKey)
+		existingEnglishList.push(englishKey)
 		const phraseFamily = clampText(
 			payload.phraseFamily,
 			stage.phraseFamilies[0] ?? 'Generated sentence production'
@@ -360,7 +381,9 @@ export async function ensureGeneratedSentencePool(
 				sceneTitle: options.sceneTitle,
 				action: options.action,
 				sentenceLength: options.sentenceLength ?? 'medium',
-				targetCount: options.targetCount ?? packSize,
+				targetCount:
+					options.targetCount ??
+					Math.min(24, Math.max(packSize, minFresh - freshEligible.length)),
 				weakTags: recentMistakeTags(mistakes),
 				avoidItalian,
 				avoidEnglish,

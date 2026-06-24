@@ -16,6 +16,11 @@ type PronunciationFeedback = {
 	practiceLines: string[]
 }
 
+type TranscriptResult = {
+	text: string
+	error?: string
+}
+
 const pronunciationSchema = {
 	type: 'object',
 	additionalProperties: false,
@@ -71,6 +76,13 @@ function tokenise(value: string) {
 	return normalise(value).split(' ').filter(Boolean)
 }
 
+function hasUsableTranscript(transcript: string, expectedText: string) {
+	const heardTokens = tokenise(transcript)
+	const expectedTokens = tokenise(expectedText)
+	if (!heardTokens.length) return false
+	return heardTokens.length >= Math.min(2, expectedTokens.length)
+}
+
 function lcsLength(a: string[], b: string[]) {
 	const previous = Array.from({ length: b.length + 1 }, () => 0)
 	const current = Array.from({ length: b.length + 1 }, () => 0)
@@ -89,18 +101,33 @@ function lcsLength(a: string[], b: string[]) {
 	return previous[b.length]
 }
 
-function deterministicFeedback(
+export function deterministicFeedback(
 	expectedText: string,
 	transcript: string
 ): PronunciationFeedback {
 	const expectedTokens = tokenise(expectedText)
 	const heardTokens = tokenise(transcript)
+	if (!heardTokens.length) {
+		return {
+			transcript: '',
+			intelligibilityScore: 0,
+			passageCoverage: 0,
+			rhythmScore: 0,
+			problemSounds: ['recording', 'transcript'],
+			missedWords: expectedTokens.slice(0, 8),
+			substitutions: [],
+			shortFeedback:
+				'I could not detect enough Italian speech to score this recording. Try again closer to the microphone.',
+			practiceLines: [
+				expectedTokens.slice(0, Math.ceil(expectedTokens.length / 2)).join(' '),
+				expectedTokens.slice(Math.ceil(expectedTokens.length / 2)).join(' '),
+			].filter(Boolean),
+		}
+	}
 	const heardSet = new Set(heardTokens)
-	const missedWords = expectedTokens
-		.filter((token) => !heardSet.has(token))
-		.slice(0, 8)
+	const allMissedWords = expectedTokens.filter((token) => !heardSet.has(token))
 	const unorderedCoverage = expectedTokens.length
-		? ((expectedTokens.length - missedWords.length) / expectedTokens.length) * 100
+		? ((expectedTokens.length - allMissedWords.length) / expectedTokens.length) * 100
 		: 0
 	const sequenceCoverage = expectedTokens.length
 		? (lcsLength(expectedTokens, heardTokens) / expectedTokens.length) * 100
@@ -119,7 +146,7 @@ function deterministicFeedback(
 		passageCoverage: clampScore(coverage),
 		rhythmScore,
 		problemSounds: score >= 80 ? [] : ['pronunciation', 'word-shape'],
-		missedWords,
+		missedWords: allMissedWords.slice(0, 8),
 		substitutions: [],
 		shortFeedback:
 			score >= 85
@@ -134,7 +161,11 @@ function deterministicFeedback(
 	}
 }
 
-async function transcribeAudio(audio: File, apiKey: string, expectedText: string) {
+async function transcribeAudio(
+	audio: File,
+	apiKey: string,
+	expectedText: string
+): Promise<TranscriptResult> {
 	const form = new FormData()
 	form.append('file', audio)
 	form.append(
@@ -152,9 +183,17 @@ async function transcribeAudio(audio: File, apiKey: string, expectedText: string
 		},
 		body: form,
 	})
-	if (!response.ok) return ''
+	if (!response.ok) {
+		const errorText = await response.text().catch(() => '')
+		return {
+			text: '',
+			error: errorText
+				? `Transcription failed (${response.status}): ${errorText.slice(0, 180)}`
+				: `Transcription failed (${response.status})`,
+		}
+	}
 	const data = (await response.json()) as { text?: string }
-	return data.text ?? ''
+	return { text: data.text?.trim() ?? '' }
 }
 
 async function assessWithOpenAI(payload: {
@@ -232,7 +271,38 @@ export default async (req: Request) => {
 		}
 
 		const apiKey = getEnv('OPENAI_API_KEY')
-		const transcript = apiKey ? await transcribeAudio(audio, apiKey, expectedText) : ''
+		if (!apiKey) {
+			return json(
+				{
+					error: 'Pronunciation score unavailable',
+					message: 'OpenAI transcription is not configured for this deployment.',
+				},
+				{ status: 503 }
+			)
+		}
+
+		const transcription = await transcribeAudio(audio, apiKey, expectedText)
+		if (transcription.error) {
+			return json(
+				{
+					error: 'Pronunciation score unavailable',
+					message: transcription.error,
+				},
+				{ status: 502 }
+			)
+		}
+
+		const transcript = transcription.text
+		if (!hasUsableTranscript(transcript, expectedText)) {
+			return json(
+				{
+					error: 'No clear transcript',
+					message:
+						'I could not hear enough Italian speech to score this reading. Please try again closer to the microphone.',
+				},
+				{ status: 422 }
+			)
+		}
 		const fallback = deterministicFeedback(expectedText, transcript)
 		const ai = await assessWithOpenAI({
 			expectedText,
