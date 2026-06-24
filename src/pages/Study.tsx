@@ -91,6 +91,17 @@ type TransferFeedback = EvaluationResult & {
 	provider?: 'openai' | 'deterministic'
 }
 
+function friendlyPronunciationError(message: string) {
+	if (
+		/incorrect api key|invalid_api_key|openai_api_key|transcription key|401/i.test(
+			message
+		)
+	) {
+		return 'OpenAI transcription is not configured correctly. In Netlify, OPENAI_API_KEY must contain the actual sk-... key value only, not OPENAI_API_KEY=...'
+	}
+	return message
+}
+
 function shuffleWords(words: string[]) {
 	return [...words].sort(() => Math.random() - 0.5)
 }
@@ -469,7 +480,9 @@ export default function Study() {
 			setPronunciationFeedback(data as PronunciationFeedback)
 		} catch (error) {
 			setPronunciationError(
-				error instanceof Error ? error.message : 'Pronunciation score unavailable'
+				error instanceof Error
+					? friendlyPronunciationError(error.message)
+					: 'Pronunciation score unavailable'
 			)
 		} finally {
 			setPronunciationLoading(false)

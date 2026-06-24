@@ -21,6 +21,28 @@ type TranscriptResult = {
 	error?: string
 }
 
+export function openAIKeyConfigError(apiKey: string | undefined) {
+	const value = apiKey?.trim()
+	if (!value) return 'OpenAI transcription is not configured for this deployment.'
+	if (value.startsWith('OPENAI_API_KEY')) {
+		return 'OpenAI is misconfigured: in Netlify, set OPENAI_API_KEY to the actual key value only, not a full OPENAI_API_KEY=... line.'
+	}
+	if (!value.startsWith('sk-')) {
+		return 'OpenAI is misconfigured: OPENAI_API_KEY should be the actual OpenAI API key value, usually starting with sk-.'
+	}
+	return null
+}
+
+function transcriptionFailureMessage(status: number) {
+	if (status === 401) {
+		return 'OpenAI rejected the transcription key. Check Netlify environment variable OPENAI_API_KEY: the value must be the actual sk-... key only.'
+	}
+	if (status === 429) {
+		return 'OpenAI transcription is temporarily unavailable because the API quota or rate limit was reached.'
+	}
+	return `OpenAI transcription is temporarily unavailable (${status}).`
+}
+
 const pronunciationSchema = {
 	type: 'object',
 	additionalProperties: false,
@@ -184,12 +206,10 @@ async function transcribeAudio(
 		body: form,
 	})
 	if (!response.ok) {
-		const errorText = await response.text().catch(() => '')
+		await response.text().catch(() => '')
 		return {
 			text: '',
-			error: errorText
-				? `Transcription failed (${response.status}): ${errorText.slice(0, 180)}`
-				: `Transcription failed (${response.status})`,
+			error: transcriptionFailureMessage(response.status),
 		}
 	}
 	const data = (await response.json()) as { text?: string }
@@ -270,12 +290,13 @@ export default async (req: Request) => {
 			return json({ error: 'Audio recording is too large' }, { status: 413 })
 		}
 
-		const apiKey = getEnv('OPENAI_API_KEY')
-		if (!apiKey) {
+		const apiKey = getEnv('OPENAI_API_KEY')?.trim()
+		const configError = openAIKeyConfigError(apiKey)
+		if (configError) {
 			return json(
 				{
 					error: 'Pronunciation score unavailable',
-					message: 'OpenAI transcription is not configured for this deployment.',
+					message: configError,
 				},
 				{ status: 503 }
 			)

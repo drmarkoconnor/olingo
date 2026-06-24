@@ -6,7 +6,10 @@ import {
 	recordPronunciationAttempt,
 } from '@/learning/pronunciation'
 import { db } from '@/storage/db'
-import { deterministicFeedback } from '../../netlify/functions/pronunciation-assessment'
+import {
+	deterministicFeedback,
+	openAIKeyConfigError,
+} from '../../netlify/functions/pronunciation-assessment'
 
 const userId = 'pronunciation-user'
 
@@ -63,5 +66,13 @@ describe('pronunciation records', () => {
 		expect(feedback.passageCoverage).toBe(0)
 		expect(feedback.rhythmScore).toBe(0)
 		expect(feedback.shortFeedback).toContain('could not detect')
+	})
+
+	it('detects a Netlify value set to a full OPENAI_API_KEY line', () => {
+		expect(openAIKeyConfigError('OPENAI_API_KEY=sk-test')).toContain(
+			'actual key value only'
+		)
+		expect(openAIKeyConfigError('not-a-key')).toContain('starting with sk-')
+		expect(openAIKeyConfigError('sk-test')).toBeNull()
 	})
 })
