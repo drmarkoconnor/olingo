@@ -100,6 +100,12 @@ describe('daily sprint composition', () => {
 					action: 'Ask opinion',
 					keyVerb: 'dovere',
 					construction: 'modal-infinitive',
+					frameId: 'offer-family-modal-help',
+					tenseFocus: 'modal-infinitive',
+					vocabDomain: 'family',
+					communicativeFunction: 'offer',
+					maxWords: 10,
+					utilityScore: 92,
 				},
 			],
 			{
@@ -126,6 +132,60 @@ describe('daily sprint composition', () => {
 				item.exercise.targetItalian.includes('decisione veloce')
 			)
 		).toBe(true)
+		expect(queue.some((item) => item.exercise.frameId === 'offer-family-modal-help')).toBe(
+			true
+		)
+	})
+
+	it('rejects generated sentences that are long or low utility', async () => {
+		const saved = await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish:
+						'The purple armadillo eats a constant weight of insects in the mountains.',
+					targetItalian:
+						'Il armadillo viola mangia un peso costante di insetti quando vive in montagna.',
+					acceptedItalian: [],
+					hints: ['This should not be saved.'],
+					tags: ['generated'],
+					phraseFamily: 'Odd sentence',
+					action: 'Build',
+					keyVerb: 'mangiare',
+					construction: 'surreal-long',
+					maxWords: 8,
+					utilityScore: 95,
+				},
+				{
+					promptEnglish: 'Please pass me the bread.',
+					targetItalian: 'Passami il pane, per favore.',
+					acceptedItalian: [],
+					hints: ['Useful, but the score says otherwise.'],
+					tags: ['generated', 'food'],
+					phraseFamily: 'Ask For Something At The Table',
+					action: 'Build',
+					keyVerb: 'passare',
+					construction: 'imperative-request',
+					frameId: 'request-food-imperative-pass-salt',
+					tenseFocus: 'imperative',
+					vocabDomain: 'food',
+					communicativeFunction: 'request',
+					maxWords: 6,
+					utilityScore: 40,
+				},
+			],
+			{
+				targetLevel: 'B1',
+				programWeek: 6,
+				sentenceLength: 'medium',
+				sceneId: 'family-table',
+				action: 'Build',
+				provider: 'openai',
+				packId: 'bad-pack',
+			}
+		)
+
+		expect(saved).toEqual([])
 	})
 })
 

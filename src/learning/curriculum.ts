@@ -1,4 +1,5 @@
 import type { Exercise } from '@/learning/content'
+import type { TenseFocus } from '@/learning/conversation-frames'
 
 export type CurriculumStrand =
 	| 'input'
@@ -23,6 +24,7 @@ export type CurriculumStage = {
 	topics: string[]
 	tags: string[]
 	phraseFamilies: string[]
+	tenseFocuses: TenseFocus[]
 }
 
 export const curriculumStages: CurriculumStage[] = [
@@ -41,6 +43,7 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['family', 'everyday living', 'simple questions'],
 		tags: ['question', 'article', 'agreement', 'core', 'fare'],
 		phraseFamilies: ['Asking follow-up questions', 'Offering help', 'Conversation repair'],
+		tenseFocuses: ['present'],
 	},
 	{
 		id: 'modal-engine',
@@ -56,6 +59,7 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['routines', 'errands', 'appointments'],
 		tags: ['modal', 'planning', 'routine', 'family'],
 		phraseFamilies: ['Making plans', 'Inviting', 'Offering help'],
+		tenseFocuses: ['present', 'modal-infinitive', 'imperative'],
 	},
 	{
 		id: 'real-life-past',
@@ -71,6 +75,7 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['visits', 'conversations', 'family events', 'problems'],
 		tags: ['past', 'auxiliary', 'imperfect'],
 		phraseFamilies: ['Telling past events', 'Reacting'],
+		tenseFocuses: ['present', 'modal-infinitive', 'passato-prossimo'],
 	},
 	{
 		id: 'pronoun-control',
@@ -86,6 +91,12 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['family messages', 'giving things', 'telling people'],
 		tags: ['pronoun', 'clitic', 'indirect-object'],
 		phraseFamilies: ['Conversation repair', 'Telling past events'],
+		tenseFocuses: [
+			'present',
+			'modal-infinitive',
+			'passato-prossimo',
+			'imperfect',
+		],
 	},
 	{
 		id: 'future-opinions',
@@ -101,6 +112,7 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['family decisions', 'local issues', 'work/life', 'simple politics'],
 		tags: ['opinion', 'news', 'politics', 'future'],
 		phraseFamilies: ['Giving opinions', 'Softening', 'Summarising news'],
+		tenseFocuses: ['present', 'passato-prossimo', 'future', 'conditional'],
 	},
 	{
 		id: 'complex-phrase-fluency',
@@ -116,20 +128,30 @@ export const curriculumStages: CurriculumStage[] = [
 		topics: ['news stories', 'opinions', 'plans', 'past events'],
 		tags: ['connector', 'conditional', 'reason', 'stretch'],
 		phraseFamilies: ['Making plans', 'Comparing', 'Giving opinions'],
+		tenseFocuses: [
+			'present',
+			'modal-infinitive',
+			'passato-prossimo',
+			'imperfect',
+			'future',
+			'conditional',
+			'subjunctive-chunk',
+		],
 	},
 ]
 
 export const dailySessionPlan = [
-	{ id: 'mistakes', minutes: 5, label: 'Repair old mistakes' },
-	{ id: 'frames', minutes: 8, label: 'Build useful verb frames' },
-	{ id: 'mixed', minutes: 10, label: 'Mix sentence practice' },
-	{ id: 'pronunciation', minutes: 4, label: 'Read aloud' },
-	{ id: 'input', minutes: 3, label: 'Watch or read and respond' },
+	{ id: 'warmup', minutes: 4, label: 'Recall useful chunks' },
+	{ id: 'frames', minutes: 12, label: 'Build fast spoken sentences' },
+	{ id: 'mixed', minutes: 6, label: 'Mix sentence patterns' },
+	{ id: 'mistakes', minutes: 3, label: 'Repair old mistakes' },
+	{ id: 'pronunciation', minutes: 3, label: 'Read aloud' },
+	{ id: 'input', minutes: 2, label: 'Watch or read and respond' },
 ] as const
 
 export const roundFocusWeights: Record<RoundFocus, number> = {
-	core: 40,
-	'verbs-frames': 25,
+	core: 35,
+	'verbs-frames': 30,
 	'past-pronouns': 20,
 	topics: 10,
 	stretch: 5,

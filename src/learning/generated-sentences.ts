@@ -8,9 +8,19 @@ import {
 import {
 	exerciseIsAvailableForWeek,
 	getCurriculumStage,
-	getExerciseConstruction,
 	getExerciseRoundFocus,
 } from '@/learning/curriculum'
+import {
+	countItalianWords,
+	getActiveTenseFocusesForWeek,
+	getConversationFramesForWeek,
+	getFrameById,
+	getGenerationFramesForWeek,
+	recognitionOnlyTenses,
+	type CommunicativeFunction,
+	type TenseFocus,
+	type VocabDomain,
+} from '@/learning/conversation-frames'
 import { createExerciseState } from '@/learning/scheduler'
 import { db, type GeneratedExerciseItem, type MistakeItem } from '@/storage/db'
 
@@ -42,6 +52,12 @@ type GeneratedExercisePayload = {
 	keyVerb?: string
 	construction?: string
 	npcLine?: string
+	frameId?: string
+	tenseFocus?: TenseFocus
+	vocabDomain?: VocabDomain
+	communicativeFunction?: CommunicativeFunction
+	maxWords?: number
+	utilityScore?: number
 }
 
 type GeneratedPackResponse = {
@@ -78,11 +94,14 @@ export function levelForDifficulty(difficulty: ExerciseDifficulty): CefrLevel {
 }
 
 export function sentenceFitsLength(
-	exercise: Pick<Exercise, 'targetItalian'>,
+	exercise: Pick<Exercise, 'targetItalian' | 'maxWords'>,
 	length?: SentenceLength
 ) {
+	if (exercise.maxWords && countItalianWords(exercise.targetItalian) > exercise.maxWords) {
+		return false
+	}
 	if (!length || length === 'long') return true
-	const words = exercise.targetItalian.split(/\s+/).filter(Boolean).length
+	const words = countItalianWords(exercise.targetItalian)
 	if (length === 'short') return words <= 7
 	return words <= 11
 }
@@ -157,6 +176,26 @@ function defaultPhase(level: CefrLevel) {
 	return level === 'A1' || level === 'A2' ? 'produce' : 'speak'
 }
 
+function defaultMaxWordsFor(level: CefrLevel, length?: SentenceLength) {
+	if (length === 'short') return 7
+	if (length === 'long' && (level === 'B1' || level === 'B2' || level === 'C1')) {
+		return 12
+	}
+	return 10
+}
+
+function clampMaxWords(value: unknown, fallback: number) {
+	const parsed = Number(value)
+	if (!Number.isFinite(parsed)) return fallback
+	return Math.max(4, Math.min(12, Math.round(parsed)))
+}
+
+function clampUtilityScore(value: unknown, fallback: number) {
+	const parsed = Number(value)
+	if (!Number.isFinite(parsed)) return fallback
+	return Math.max(0, Math.min(100, Math.round(parsed)))
+}
+
 export function generatedItemToExercise(item: GeneratedExerciseItem): Exercise {
 	return {
 		id: item.id,
@@ -183,6 +222,12 @@ export function generatedItemToExercise(item: GeneratedExerciseItem): Exercise {
 		keyVerb: item.keyVerb,
 		construction: item.construction,
 		npcLine: item.npcLine,
+		frameId: item.frameId,
+		tenseFocus: item.tenseFocus,
+		vocabDomain: item.vocabDomain,
+		communicativeFunction: item.communicativeFunction,
+		maxWords: item.maxWords,
+		utilityScore: item.utilityScore,
 	}
 }
 
@@ -233,6 +278,12 @@ export async function saveGeneratedExercises(
 	const difficulty = difficultyForLevel(targetLevel)
 	const now = new Date().toISOString()
 	const stage = getCurriculumStage(options.programWeek)
+	const frames = getConversationFramesForWeek(options.programWeek, {
+		targetLevel,
+		action: options.action,
+		limit: 18,
+	})
+	const fallbackMaxWords = defaultMaxWordsFor(targetLevel, options.sentenceLength)
 	const existing = await db.generatedExercises
 		.where('userId')
 		.equals(userId)
@@ -258,6 +309,19 @@ export async function saveGeneratedExercises(
 		if (existingHashes.has(contentHash)) continue
 		const italianKey = normaliseSentence(targetItalian)
 		const englishKey = normaliseSentence(promptEnglish)
+		const providedFrame = getFrameById(payload.frameId)
+		const fallbackFrame = frames[items.length % Math.max(1, frames.length)]
+		const frame = providedFrame ?? fallbackFrame
+		const maxWords = clampMaxWords(
+			payload.maxWords,
+			providedFrame?.maxWords ?? fallbackMaxWords
+		)
+		const utilityScore = clampUtilityScore(
+			payload.utilityScore,
+			frame?.utilityScore ?? 80
+		)
+		if (utilityScore < 70) continue
+		if (countItalianWords(targetItalian) > maxWords) continue
 		if (existingItalian.has(italianKey) || existingEnglish.has(englishKey)) continue
 		if (
 			hasNearDuplicate(italianKey, existingItalianList) ||
@@ -282,8 +346,16 @@ export async function saveGeneratedExercises(
 		const tags = unique([
 			targetLevel.toLowerCase(),
 			'generated',
+			payload.communicativeFunction ?? frame?.communicativeFunction ?? '',
+			payload.tenseFocus ?? frame?.tenseFocus ?? '',
+			payload.vocabDomain ?? frame?.vocabDomain ?? '',
 			...(payload.tags ?? stage.tags),
 		]).slice(0, 8)
+		const frameId = payload.frameId ?? frame?.id
+		const tenseFocus = payload.tenseFocus ?? frame?.tenseFocus
+		const vocabDomain = payload.vocabDomain ?? frame?.vocabDomain
+		const communicativeFunction =
+			payload.communicativeFunction ?? frame?.communicativeFunction
 
 		items.push({
 			id,
@@ -327,10 +399,22 @@ export async function saveGeneratedExercises(
 				difficulty,
 				cefrLevel: targetLevel,
 				construction,
+				frameId,
+				tenseFocus,
+				vocabDomain,
+				communicativeFunction,
+				maxWords,
+				utilityScore,
 			}),
 			keyVerb: payload.keyVerb,
 			construction,
 			npcLine: payload.npcLine,
+			frameId,
+			tenseFocus,
+			vocabDomain,
+			communicativeFunction,
+			maxWords,
+			utilityScore,
 			createdAt: now,
 			lastUsedAt: null,
 			useCount: 0,
@@ -378,6 +462,11 @@ export async function ensureGeneratedSentencePool(
 	}
 
 	const stage = getCurriculumStage(options.programWeek)
+	const generationFrames = getGenerationFramesForWeek(options.programWeek, {
+		targetLevel,
+		action: options.action,
+		limit: 14,
+	})
 	const mistakes = await db.mistakes.where('userId').equals(userId).toArray()
 	const avoidItalian = unique([
 		...exercises.map((exercise) => exercise.targetItalian),
@@ -396,6 +485,9 @@ export async function ensureGeneratedSentencePool(
 				level: targetLevel,
 				programWeek: options.programWeek,
 				stage,
+				activeTenseFocuses: getActiveTenseFocusesForWeek(options.programWeek),
+				recognitionOnlyTenses,
+				conversationFrames: generationFrames,
 				sceneId: options.sceneId,
 				sceneTitle: options.sceneTitle,
 				action: options.action,

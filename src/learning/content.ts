@@ -1,3 +1,9 @@
+import type {
+	CommunicativeFunction,
+	TenseFocus,
+	VocabDomain,
+} from '@/learning/conversation-frames'
+
 export type Scene = {
 	id: string
 	title: string
@@ -54,6 +60,12 @@ export type Exercise = {
 	keyVerb?: string
 	construction?: string
 	npcLine?: string
+	frameId?: string
+	tenseFocus?: TenseFocus
+	vocabDomain?: VocabDomain
+	communicativeFunction?: CommunicativeFunction
+	maxWords?: number
+	utilityScore?: number
 }
 
 export const cefrLevels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']

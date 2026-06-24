@@ -1,10 +1,10 @@
 import { db, type DailySession, type DailySessionItem, type MistakeItem } from '@/storage/db'
 
 export const sessionActivityLabels = {
-	match: 'Match chunks',
-	recall: 'Recall cards',
-	sentence: 'Build sentences',
-	repair: 'Repair mistakes',
+	match: 'Match useful chunks',
+	recall: 'Recall sentence starters',
+	sentence: 'Build fast sentences',
+	repair: 'Repair old mistakes',
 	pronunciation: 'Read aloud',
 	transfer: 'Video or article',
 } as const
@@ -55,9 +55,9 @@ function clampTarget(value: number, fallback: number, max: number) {
 }
 
 export function buildDailyActivityDefinitions(options: DailySessionOptions) {
-	const matchTarget = clampTarget(Math.min(options.vocabularyCount, 8), 4, 8)
-	const recallTarget = clampTarget(Math.min(options.vocabularyCount, 6), 4, 6)
-	const sentenceTarget = clampTarget(options.sentenceCount, 8, 8)
+	const matchTarget = clampTarget(Math.min(options.vocabularyCount, 4), 4, 4)
+	const recallTarget = clampTarget(Math.min(options.vocabularyCount, 3), 3, 3)
+	const sentenceTarget = clampTarget(Math.min(options.sentenceCount, 10), 8, 10)
 	const repairTarget = Math.max(0, Math.min(3, Math.round(options.repairCount)))
 
 	return [
@@ -107,20 +107,27 @@ async function reconcileSessionDefinitions(
 
 	const definitions = buildDailyActivityDefinitions(options)
 	const itemByType = new Map(existingItems.map((item) => [item.type, item]))
-	const missingDefinitions = definitions.filter(
-		(definition) => !itemByType.has(definition.type)
-	)
-	if (!missingDefinitions.length) return { session, items: existingItems }
 
 	const now = new Date().toISOString()
 	const definitionItems: DailySessionItem[] = definitions.map(
 		(definition, index): DailySessionItem => {
 			const existing = itemByType.get(definition.type)
 			if (existing) {
+				const targetCount = Math.max(
+					definition.targetCount,
+					existing.completedCount
+				)
 				return {
 					...existing,
 					label: definition.label,
 					sortOrder: index,
+					targetCount,
+					status:
+						existing.completedCount >= targetCount ? 'complete' : existing.status,
+					completedAt:
+						existing.completedCount >= targetCount
+							? existing.completedAt ?? now
+							: existing.completedAt,
 				}
 			}
 			return {
@@ -154,13 +161,14 @@ async function reconcileSessionDefinitions(
 		(total, item) => total + Math.min(item.completedCount, item.targetCount),
 		0
 	)
+	const allComplete = mergedItems.every((item) => item.status === 'complete')
 	const updatedSession: DailySession = {
 		...session,
 		plannedCount: mergedItems.reduce((total, item) => total + item.targetCount, 0),
 		completedCount,
-		status: 'active',
+		status: allComplete ? 'complete' : 'active',
 		updatedAt: now,
-		completedAt: null,
+		completedAt: allComplete ? session.completedAt ?? now : null,
 	}
 
 	await db.transaction('rw', db.dailySessions, db.dailySessionItems, async () => {

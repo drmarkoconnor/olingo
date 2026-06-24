@@ -29,7 +29,7 @@ describe('daily session planning', () => {
 				programWeek: 1,
 				dailyGoal: 30,
 				vocabularyCount: 10,
-				sentenceCount: 8,
+				sentenceCount: 10,
 				repairCount: 2,
 			},
 			'2026-06-14'
@@ -55,8 +55,13 @@ describe('daily session planning', () => {
 			'pronunciation',
 			'transfer',
 		])
+		expect(first.items.find((item) => item.type === 'sentence')?.targetCount).toBe(
+			10
+		)
+		expect(first.items.find((item) => item.type === 'match')?.targetCount).toBe(4)
+		expect(first.items.find((item) => item.type === 'recall')?.targetCount).toBe(3)
 		expect(getDailySessionProgress(first.items)).toEqual({
-			planned: 26,
+			planned: 21,
 			completed: 0,
 			percent: 0,
 		})

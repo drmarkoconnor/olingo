@@ -169,7 +169,7 @@ export default function Study() {
 		let mounted = true
 		async function load() {
 			setLoading(true)
-			const sprintLimit = Math.max(12, Math.min(20, Math.round(dailyGoal / 2) + 4))
+			const sprintLimit = Math.max(16, Math.min(28, Math.round(dailyGoal / 2) + 10))
 			const cards = await loadSceneCards(userId, programWeek)
 			const selectedScene =
 				cards.find((card) => card.id === selectedSceneId && card.available) ??
@@ -188,7 +188,7 @@ export default function Study() {
 			})
 			const sentenceItems = queue
 				.filter((item) => !item.sourceMistakeId)
-				.slice(0, 8)
+				.slice(0, 10)
 			const dueMistakes = await loadDueMistakes(userId, 3)
 			const sceneId =
 				sentenceItems[0]?.exercise.sceneId ?? queue[0]?.exercise.sceneId ?? scenes[0].id
@@ -967,6 +967,14 @@ function SentenceBuilder({
 	onSetSpokenFirst: (value: boolean) => void
 	onSubmit: (event: FormEvent) => void
 }) {
+	const frameMeta = [
+		current.exercise.communicativeFunction,
+		current.exercise.tenseFocus,
+		current.exercise.vocabDomain,
+	]
+		.filter(Boolean)
+		.map((value) => value!.replace(/-/g, ' '))
+
 	return (
 		<>
 			<div className="quest-meta">
@@ -982,6 +990,12 @@ function SentenceBuilder({
 					<ShieldCheck size={15} />
 					{sprintPhaseLabels[currentPhase as keyof typeof sprintPhaseLabels]}
 				</span>
+				{frameMeta.map((value) => (
+					<span key={value}>
+						<Sparkles size={15} />
+						{value}
+					</span>
+				))}
 			</div>
 
 			{current.exercise.npcLine && (
