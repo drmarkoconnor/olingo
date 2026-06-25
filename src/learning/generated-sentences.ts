@@ -22,6 +22,7 @@ import {
 	type VocabDomain,
 } from '@/learning/conversation-frames'
 import { createExerciseState } from '@/learning/scheduler'
+import { apiFetch } from '@/lib/api'
 import { db, type GeneratedExerciseItem, type MistakeItem } from '@/storage/db'
 
 export type SentenceLength = 'short' | 'medium' | 'long'
@@ -491,7 +492,7 @@ export async function ensureGeneratedSentencePool(
 	]).slice(-180)
 
 	try {
-		const response = await fetch('/api/generate-sentence-pack', {
+		const response = await apiFetch('/api/generate-sentence-pack', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({

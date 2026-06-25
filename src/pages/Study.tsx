@@ -67,6 +67,7 @@ import {
 	recordVocabularyReview,
 	type VocabularyReviewCard,
 } from '@/learning/vocabulary'
+import { apiFetch, friendlyApiError } from '@/lib/api'
 import { canTTS, speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
@@ -402,7 +403,7 @@ export default function Study() {
 	async function loadSources() {
 		setSourceLoading(true)
 		try {
-			const response = await fetch('/api/italian-sources')
+			const response = await apiFetch('/api/italian-sources')
 			if (!response.ok) throw new Error('source unavailable')
 			const data = (await response.json()) as {
 				items: SourceItem[]
@@ -532,7 +533,7 @@ export default function Study() {
 			form.append('audio', audio, 'olingo-reading.webm')
 			form.append('passageId', pronunciationPassage.id)
 			form.append('expectedText', pronunciationPassage.text)
-			const response = await fetch('/api/pronunciation-assessment', {
+			const response = await apiFetch('/api/pronunciation-assessment', {
 				method: 'POST',
 				body: form,
 			})
@@ -607,7 +608,7 @@ export default function Study() {
 		setTransferLoading(true)
 		setTransferError(null)
 		try {
-			const response = await fetch('/api/evaluate-transfer', {
+			const response = await apiFetch('/api/evaluate-transfer', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -629,9 +630,11 @@ export default function Study() {
 				: null
 			if (!response.ok) {
 				throw new Error(
-					data?.message ??
-						data?.error ??
+					friendlyApiError(
+						response.status,
+						data?.message ?? data?.error,
 						`Transfer sentence could not be checked (${response.status})`
+					)
 				)
 			}
 			setTransferFeedback(data as TransferFeedback)

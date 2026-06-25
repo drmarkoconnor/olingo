@@ -6,6 +6,7 @@ import {
 	type CefrLevel,
 	type Scene,
 } from '@/learning/content'
+import { apiFetch } from '@/lib/api'
 import { db, type SceneEpisode } from '@/storage/db'
 
 export const sceneEpisodeTargetCount = 8
@@ -396,7 +397,7 @@ async function generateRemoteScenario(args: {
 }) {
 	if (typeof window === 'undefined') return null
 	try {
-		const response = await fetch('/api/generate-scene-scenario', {
+		const response = await apiFetch('/api/generate-scene-scenario', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({

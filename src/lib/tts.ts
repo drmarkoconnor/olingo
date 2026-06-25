@@ -1,3 +1,5 @@
+import { apiFetch } from '@/lib/api'
+
 let currentAudio: HTMLAudioElement | null = null
 
 export function canTTS() {
@@ -16,7 +18,7 @@ function stopCurrentAudio() {
 
 async function speakWithServer(text: string) {
 	try {
-		const response = await fetch('/api/italian-tts', {
+		const response = await apiFetch('/api/italian-tts', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ text }),

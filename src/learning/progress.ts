@@ -38,6 +38,7 @@ import {
 	createExerciseState,
 	scheduleExerciseReview,
 } from '@/learning/scheduler'
+import { apiFetch } from '@/lib/api'
 import { db, type ExerciseState, type MistakeItem } from '@/storage/db'
 import { addDays } from '@/utils/time'
 
@@ -368,7 +369,7 @@ async function evaluateExerciseAnswer(
 	if (typeof window === 'undefined') return fallback
 
 	try {
-		const response = await fetch('/api/evaluate-answer', {
+		const response = await apiFetch('/api/evaluate-answer', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ exercise, answer, context }),

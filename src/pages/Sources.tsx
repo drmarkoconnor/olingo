@@ -15,6 +15,7 @@ import {
 } from '@/learning/sources'
 import { newsUnlockWeek, sourceContentUnlocked } from '@/learning/curriculum'
 import { saveGeneratedExercises } from '@/learning/generated-sentences'
+import { apiFetch } from '@/lib/api'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
 
@@ -86,7 +87,7 @@ export default function Sources() {
 	async function loadSources() {
 		setLoading(true)
 		try {
-			const response = await fetch('/api/italian-sources')
+			const response = await apiFetch('/api/italian-sources')
 			if (!response.ok) throw new Error('source unavailable')
 			const data = (await response.json()) as {
 				items: SourceItem[]
@@ -118,7 +119,7 @@ export default function Sources() {
 		setReaderLoading(true)
 		setReaderError(null)
 		try {
-			const response = await fetch('/api/source-reader', {
+			const response = await apiFetch('/api/source-reader', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -170,7 +171,7 @@ export default function Sources() {
 		if (!sourcesUnlocked) return
 		setPackLoading(true)
 		try {
-			const response = await fetch('/api/generate-content-pack', {
+			const response = await apiFetch('/api/generate-content-pack', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({

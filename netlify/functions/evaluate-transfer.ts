@@ -178,14 +178,21 @@ async function assessWithOpenAI(payload: {
 
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
-	const auth = await requireUser()
-	if (authFailed(auth)) return auth.response
 
 	const body = await readJson<Body>(req)
 	const answer = body?.answer?.trim() ?? ''
 	if (!answer) return json({ error: 'Missing transfer sentence' }, { status: 400 })
 
 	const fallback = fallbackEvaluation(answer, body?.sourceItem)
+	const auth = await requireUser()
+	if (authFailed(auth)) {
+		return json({
+			...fallback,
+			provider: 'deterministic',
+			authenticated: false,
+		})
+	}
+
 	const ai = await assessWithOpenAI({
 		sourceItem: body?.sourceItem,
 		answer,
