@@ -26,7 +26,6 @@ import {
 	getExerciseAction,
 	getExercisePhase,
 	getScene,
-	getVocabularyForScene,
 	cefrLevels,
 	scenes,
 	sprintPhaseLabels,
@@ -63,6 +62,11 @@ import {
 	type PronunciationFeedback,
 } from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
+import {
+	loadVocabularyReviewQueue,
+	recordVocabularyReview,
+	type VocabularyReviewCard,
+} from '@/learning/vocabulary'
 import { canTTS, speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
@@ -181,6 +185,7 @@ export default function Study() {
 	const [transferLoading, setTransferLoading] = useState(false)
 	const [transferError, setTransferError] = useState<string | null>(null)
 	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
+	const [vocabularyQueue, setVocabularyQueue] = useState<VocabularyReviewCard[]>([])
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -216,8 +221,16 @@ export default function Study() {
 				.slice(0, 10)
 			const dueMistakes = await loadDueMistakes(userId, 3)
 			const sceneId =
-				sentenceItems[0]?.exercise.sceneId ?? queue[0]?.exercise.sceneId ?? scenes[0].id
-			const vocabularyCount = getVocabularyForScene(sceneId).length
+				sentenceItems[0]?.exercise.sceneId ??
+				queue[0]?.exercise.sceneId ??
+				selectedScene.id
+			const vocabularyCards = await loadVocabularyReviewQueue(userId, sceneId, {
+				programWeek,
+				targetLevel,
+				limit: 24,
+				dateKey: todayKey,
+			})
+			const vocabularyCount = vocabularyCards.length
 			const bundle = await getOrCreateDailySession(
 				userId,
 				{
@@ -231,6 +244,7 @@ export default function Study() {
 			)
 			if (!mounted) return
 			setSceneCards(cards)
+			setVocabularyQueue(vocabularyCards)
 			setSentenceQueue(sentenceItems)
 			setRepairMistakes(dueMistakes)
 			setSession(bundle.session)
@@ -281,6 +295,8 @@ export default function Study() {
 	const pronunciationActivity = sessionItems.find(
 		(item) => item.type === 'pronunciation'
 	)
+	const matchActivity = sessionItems.find((item) => item.type === 'match')
+	const recallActivity = sessionItems.find((item) => item.type === 'recall')
 	const bonusPracticeActive = Boolean(
 		bonusPractice && !activeItem && sentenceActivity && sentenceQueue.length
 	)
@@ -317,9 +333,22 @@ export default function Study() {
 		},
 		[current, sceneCards, selectedSceneId]
 	)
-	const vocabulary = useMemo(
-		() => getVocabularyForScene(scene.id).slice(0, 8),
-		[scene.id]
+	const matchVocabulary = useMemo(
+		() =>
+			vocabularyQueue.slice(
+				0,
+				Math.max(matchActivity?.targetCount ?? 4, 4)
+			),
+		[vocabularyQueue, matchActivity?.targetCount]
+	)
+	const recallVocabulary = useMemo(
+		() => {
+			const start = Math.max(matchActivity?.targetCount ?? 4, 4)
+			const target = Math.max(recallActivity?.targetCount ?? 3, 3)
+			const next = vocabularyQueue.slice(start, start + target)
+			return next.length ? next : vocabularyQueue.slice(0, target)
+		},
+		[vocabularyQueue, matchActivity?.targetCount, recallActivity?.targetCount]
 	)
 	const transferSource = useMemo(
 		() => sourceItems.find(isVideoItem) ?? sourceItems[0] ?? fallbackSourceItems[0],
@@ -403,6 +432,22 @@ export default function Study() {
 		setSession(bundle.session)
 		setSessionItems(bundle.items)
 		setUnitStartedAt(Date.now())
+	}
+
+	async function recordVocabularyAttempt(
+		card: SceneVocabulary,
+		success: boolean,
+		countsTowardSession: boolean,
+		item: DailySessionItem | null
+	) {
+		await recordVocabularyReview(userId, card, success)
+		if (!countsTowardSession) return
+		await recordUnit(item, {
+			activeMs: Date.now() - unitStartedAt,
+			success,
+			mistake: !success,
+			tags: ['vocab', card.partOfSpeech],
+		})
 	}
 
 	async function handleSentenceSubmit(event: FormEvent) {
@@ -773,30 +818,25 @@ export default function Study() {
 				<ActivityShell item={activeSessionItem}>
 					{activeSessionItem?.type === 'match' && (
 						<GuidedVocabularyMatch
-							vocabulary={vocabulary}
+							vocabulary={matchVocabulary}
 							item={activeSessionItem}
-							onUnitComplete={(success) =>
-								recordUnit(activeSessionItem, {
-									activeMs: Date.now() - unitStartedAt,
+							onCardAttempt={(card, success, countsTowardSession) =>
+								recordVocabularyAttempt(
+									card,
 									success,
-									mistake: !success,
-									tags: ['vocab'],
-								})
+									countsTowardSession,
+									activeSessionItem
+								)
 							}
 						/>
 					)}
 
 					{activeSessionItem?.type === 'recall' && (
 						<GuidedRecallCards
-							vocabulary={vocabulary}
+							vocabulary={recallVocabulary}
 							item={activeSessionItem}
-							onUnitComplete={(success) =>
-								recordUnit(activeSessionItem, {
-									activeMs: Date.now() - unitStartedAt,
-									success,
-									mistake: !success,
-									tags: ['vocab'],
-								})
+							onCardAttempt={(card, success) =>
+								recordVocabularyAttempt(card, success, true, activeSessionItem)
 							}
 						/>
 					)}
@@ -1198,35 +1238,48 @@ function SentenceBuilder({
 
 function GuidedVocabularyMatch({
 	item,
-	onUnitComplete,
+	onCardAttempt,
 	vocabulary,
 }: {
 	item: DailySessionItem
-	onUnitComplete: (success: boolean) => void
+	onCardAttempt: (
+		card: SceneVocabulary,
+		success: boolean,
+		countsTowardSession: boolean
+	) => void
 	vocabulary: SceneVocabulary[]
 }) {
 	const targetVocabulary = vocabulary.slice(0, Math.max(item.targetCount, 1))
 	const [selectedItalian, setSelectedItalian] = useState<string | null>(null)
 	const [matchedIds, setMatchedIds] = useState<Set<string>>(new Set())
+	const targetKey = targetVocabulary.map((card) => card.id).join('|')
 	const englishCards = useMemo(
 		() => [...targetVocabulary].sort(() => Math.random() - 0.5),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[item.id]
+		[item.id, targetKey]
 	)
 
 	useEffect(() => {
 		setSelectedItalian(null)
 		setMatchedIds(new Set())
-	}, [item.id])
+	}, [item.id, targetKey])
 
 	function chooseEnglish(card: SceneVocabulary) {
 		if (!selectedItalian) return
 		if (selectedItalian === card.id && !matchedIds.has(card.id)) {
 			setMatchedIds((current) => new Set([...current, card.id]))
 			setSelectedItalian(null)
-			onUnitComplete(true)
+			onCardAttempt(card, true, true)
+			return
 		}
+		const selectedCard = targetVocabulary.find(
+			(vocabularyCard) => vocabularyCard.id === selectedItalian
+		)
+		if (selectedCard) onCardAttempt(selectedCard, false, false)
+		setSelectedItalian(null)
 	}
+
+	if (!targetVocabulary.length) return null
 
 	return (
 		<div className="answer-card">
@@ -1279,11 +1332,11 @@ function GuidedVocabularyMatch({
 
 function GuidedRecallCards({
 	item,
-	onUnitComplete,
+	onCardAttempt,
 	vocabulary,
 }: {
 	item: DailySessionItem
-	onUnitComplete: (success: boolean) => void
+	onCardAttempt: (card: SceneVocabulary, success: boolean) => void
 	vocabulary: SceneVocabulary[]
 }) {
 	const [revealed, setRevealed] = useState(false)
@@ -1297,7 +1350,7 @@ function GuidedRecallCards({
 
 	function complete(success: boolean) {
 		setRevealed(false)
-		onUnitComplete(success)
+		onCardAttempt(card, success)
 	}
 
 	return (
