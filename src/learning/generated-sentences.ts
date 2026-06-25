@@ -125,6 +125,17 @@ function normaliseSentence(value: string) {
 		.trim()
 }
 
+const leakedGeneratorInstruction = /\buse it in a\b.+\bconversation\b/i
+const italianLeakInEnglish = /\b(prendere|partire|preparare|guardare|ascoltare|ordinare|pagato|pagare|caffe|caffè|perche|piu|binario|uscire|venire|andare|fare una|fare la|dirmi|parlarne)\b/i
+
+export function generatedPromptIsCleanEnglish(promptEnglish: string) {
+	const prompt = promptEnglish.trim()
+	if (!prompt) return false
+	if (leakedGeneratorInstruction.test(prompt)) return false
+	if (italianLeakInEnglish.test(prompt)) return false
+	return true
+}
+
 function tokenSimilarity(a: string, b: string) {
 	const aTokens = new Set(a.split(' ').filter(Boolean))
 	const bTokens = new Set(b.split(' ').filter(Boolean))
@@ -144,6 +155,7 @@ function filterNearDuplicateGeneratedItems(items: GeneratedExerciseItem[]) {
 	const seenItalian: string[] = []
 	const seenEnglish: string[] = []
 	return items.filter((item) => {
+		if (!generatedPromptIsCleanEnglish(item.promptEnglish)) return false
 		const italian = normaliseSentence(item.targetItalian)
 		const english = normaliseSentence(item.promptEnglish)
 		if (
@@ -305,6 +317,7 @@ export async function saveGeneratedExercises(
 		const promptEnglish = clampText(payload.promptEnglish, '')
 		const targetItalian = clampText(payload.targetItalian, '')
 		if (!promptEnglish || !targetItalian) continue
+		if (!generatedPromptIsCleanEnglish(promptEnglish)) continue
 		const contentHash = sentenceContentHash(promptEnglish, targetItalian)
 		if (existingHashes.has(contentHash)) continue
 		const italianKey = normaliseSentence(targetItalian)

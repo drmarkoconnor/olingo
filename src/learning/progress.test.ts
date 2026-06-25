@@ -2,7 +2,10 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getExerciseAction } from '@/learning/content'
 import { exerciseIsAvailableForWeek, sourceContentUnlocked } from '@/learning/curriculum'
-import { saveGeneratedExercises } from '@/learning/generated-sentences'
+import {
+	generatedPromptIsCleanEnglish,
+	saveGeneratedExercises,
+} from '@/learning/generated-sentences'
 import {
 	ensureExerciseStates,
 	loadDailySprint,
@@ -182,6 +185,49 @@ describe('daily sprint composition', () => {
 				action: 'Build',
 				provider: 'openai',
 				packId: 'bad-pack',
+			}
+		)
+
+		expect(saved).toEqual([])
+	})
+
+	it('rejects generated prompts with Italian leaking into the English cue', async () => {
+		expect(
+			generatedPromptIsCleanEnglish(
+				'I have to prendere un caffe before we leave. Use it in a simple questions conversation.'
+			)
+		).toBe(false)
+
+		const saved = await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish:
+						'I have to prendere un caffe before we leave. Use it in a simple questions conversation.',
+					targetItalian: 'Devo prendere un caffe prima di partire.',
+					acceptedItalian: ['Devo prendere un caffe prima di partire.'],
+					hints: ['This should not be saved.'],
+					tags: ['generated', 'modal'],
+					phraseFamily: 'Making plans',
+					action: 'Build',
+					keyVerb: 'dovere',
+					construction: 'dovere-infinitive',
+					frameId: 'offer-family-modal-help',
+					tenseFocus: 'modal-infinitive',
+					vocabDomain: 'cafe',
+					communicativeFunction: 'plan',
+					maxWords: 8,
+					utilityScore: 88,
+				},
+			],
+			{
+				targetLevel: 'B1',
+				programWeek: 6,
+				sentenceLength: 'medium',
+				sceneId: 'milan-cafe',
+				action: 'Build',
+				provider: 'fallback',
+				packId: 'mixed-language-pack',
 			}
 		)
 

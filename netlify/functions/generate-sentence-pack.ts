@@ -307,6 +307,17 @@ function isBannedSentence(value: string) {
 	return banned.some((term) => normalised.includes(term))
 }
 
+const leakedGeneratorInstruction = /\buse it in a\b.+\bconversation\b/i
+const italianLeakInEnglish = /\b(prendere|partire|preparare|guardare|ascoltare|ordinare|pagato|pagare|caffe|caffè|perche|piu|binario|uscire|venire|andare|fare una|fare la|dirmi|parlarne)\b/i
+
+function promptIsCleanEnglish(promptEnglish: string) {
+	const prompt = promptEnglish.trim()
+	if (!prompt) return false
+	if (leakedGeneratorInstruction.test(prompt)) return false
+	if (italianLeakInEnglish.test(prompt)) return false
+	return true
+}
+
 const domainSlots: Record<
 	VocabDomain,
 	{
@@ -870,50 +881,74 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 		{
 			en: 'at dinner with my family',
 			it: 'a cena con la mia famiglia',
-			person: 'mia figlia',
-			activity: 'preparare la pasta',
-			place: 'in cucina',
-			object: 'il tavolo',
+			personEn: 'my daughter',
+			personIt: 'mia figlia',
+			activityEn: 'prepare the pasta',
+			activityIt: 'preparare la pasta',
+			placeEn: 'in the kitchen',
+			placeIt: 'in cucina',
+			objectEn: 'the table',
+			objectIt: 'il tavolo',
 		},
 		{
 			en: 'before the football match',
 			it: 'prima della partita',
-			person: 'mio fratello',
-			activity: 'guardare la partita',
-			place: 'al bar',
-			object: 'i biglietti',
+			personEn: 'my brother',
+			personIt: 'mio fratello',
+			activityEn: 'watch the match',
+			activityIt: 'guardare la partita',
+			placeEn: 'at the bar',
+			placeIt: 'al bar',
+			objectEn: 'the tickets',
+			objectIt: 'i biglietti',
 		},
 		{
 			en: 'during a coffee with friends',
 			it: 'durante un caffe con amici',
-			person: 'la mia amica',
-			activity: 'prendere un caffe',
-			place: 'in centro',
-			object: 'il conto',
+			personEn: 'my friend',
+			personIt: 'la mia amica',
+			activityEn: 'have a coffee',
+			activityIt: 'prendere un caffe',
+			placeEn: 'in town',
+			placeIt: 'in centro',
+			objectEn: 'the bill',
+			objectIt: 'il conto',
 		},
 		{
 			en: 'after a family visit',
 			it: 'dopo una visita in famiglia',
-			person: 'mia madre',
-			activity: 'fare una passeggiata',
-			place: 'nel parco',
-			object: 'la borsa',
+			personEn: 'my mother',
+			personIt: 'mia madre',
+			activityEn: 'go for a walk',
+			activityIt: 'fare una passeggiata',
+			placeEn: 'in the park',
+			placeIt: 'nel parco',
+			objectEn: 'the bag',
+			objectIt: 'la borsa',
 		},
 		{
 			en: 'at a small cultural event',
 			it: 'a un piccolo evento culturale',
-			person: 'il gruppo',
-			activity: 'ascoltare la musica',
-			place: 'in piazza',
-			object: 'il programma',
+			personEn: 'the group',
+			personIt: 'il gruppo',
+			activityEn: 'listen to the music',
+			activityIt: 'ascoltare la musica',
+			placeEn: 'in the square',
+			placeIt: 'in piazza',
+			objectEn: 'the programme',
+			objectIt: 'il programma',
 		},
 		{
 			en: 'while choosing food',
 			it: 'mentre scegliamo da mangiare',
-			person: 'il cameriere',
-			activity: 'ordinare qualcosa',
-			place: 'al ristorante',
-			object: 'il menu',
+			personEn: 'the waiter',
+			personIt: 'il cameriere',
+			activityEn: 'order something',
+			activityIt: 'ordinare qualcosa',
+			placeEn: 'at the restaurant',
+			placeIt: 'al ristorante',
+			objectEn: 'the menu',
+			objectIt: 'il menu',
 		},
 	]
 	const templates = [
@@ -923,18 +958,18 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			construction: 'modal-infinitive',
 		}),
 		(s: (typeof situations)[number]) => ({
-			en: `Can I help ${s.person} ${s.en}?`,
-			it: `Posso aiutare ${s.person} ${s.it}?`,
+			en: `Can I help ${s.personEn} ${s.en}?`,
+			it: `Posso aiutare ${s.personIt} ${s.it}?`,
 			construction: 'modal-question',
 		}),
 		(s: (typeof situations)[number]) => ({
-			en: `I have to ${s.activity} before we leave.`,
-			it: `Devo ${s.activity} prima di partire.`,
+			en: `I have to ${s.activityEn} before leaving.`,
+			it: `Devo ${s.activityIt} prima di partire.`,
 			construction: 'dovere-infinitive',
 		}),
 		(s: (typeof situations)[number]) => ({
-			en: `Yesterday I saw ${s.person} ${s.en}.`,
-			it: `Ieri ho visto ${s.person} ${s.it}.`,
+			en: `Yesterday I saw ${s.personEn} ${s.en}.`,
+			it: `Ieri ho visto ${s.personIt} ${s.it}.`,
 			construction: 'past-event',
 		}),
 		(s: (typeof situations)[number]) => ({
@@ -943,8 +978,8 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			construction: 'opinion-frame',
 		}),
 		(s: (typeof situations)[number]) => ({
-			en: `Can you tell me where ${s.object} is?`,
-			it: `Puoi dirmi dove si trova ${s.object}?`,
+			en: `Can you tell me where ${s.objectEn} is?`,
+			it: `Puoi dirmi dove si trova ${s.objectIt}?`,
 			construction: 'question-place',
 		}),
 		(s: (typeof situations)[number]) => ({
@@ -958,8 +993,8 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			construction: 'modal-pronoun',
 		}),
 		(s: (typeof situations)[number]) => ({
-			en: `I brought ${s.object} because it was useful.`,
-			it: `Ho portato ${s.object} perche era utile.`,
+			en: `I brought ${s.objectEn} because it was useful.`,
+			it: `Ho portato ${s.objectIt} perche era utile.`,
 			construction: 'past-reason',
 		}),
 		(s: (typeof situations)[number]) => ({
@@ -1000,7 +1035,7 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			? 'local-news'
 			: 'home'
 		return {
-			promptEnglish: `${base.en} Use it in a ${topic} conversation.`,
+			promptEnglish: base.en,
 			targetItalian: base.it,
 			acceptedItalian: [base.it],
 			hints: [`Use ${verb} as your anchor verb.`, `Focus: ${base.construction}.`],
@@ -1033,6 +1068,7 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 	const defaultMaxWords = defaultMaxWordsFor(level, sentenceLength)
 	return exercises
 		.filter((exercise) => exercise.promptEnglish && exercise.targetItalian)
+		.filter((exercise) => promptIsCleanEnglish(exercise.promptEnglish))
 		.filter((exercise) => {
 			const english = normaliseSentence(exercise.promptEnglish)
 			const italian = normaliseSentence(exercise.targetItalian)
@@ -1115,6 +1151,7 @@ async function generateWithOpenAI(body: Body, count: number) {
 							'Every targetItalian must be at or under the frame maxWords value.',
 							'Every utilityScore must be 70-100 and should reflect everyday usefulness.',
 							'Every promptEnglish should be a clear British English communicative intent.',
+							'promptEnglish must be pure English: no Italian words, no mixed-language phrases, and no meta instructions such as "Use it in a conversation".',
 							'Every targetItalian should be a natural sentence the learner could say aloud.',
 							'Use common adult situations: food, family, sport, cafe, shopping, travel, home, health, culture, or local news.',
 							'Reject surreal, abstract, literary, classroom-only, or low-utility sentences.',
