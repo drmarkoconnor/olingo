@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getExerciseAction } from '@/learning/content'
 import { exerciseIsAvailableForWeek, sourceContentUnlocked } from '@/learning/curriculum'
 import {
@@ -18,6 +18,10 @@ const userId = 'test-user'
 beforeEach(async () => {
 	await db.delete()
 	await db.open()
+})
+
+afterEach(() => {
+	vi.unstubAllGlobals()
 })
 
 describe('daily sprint composition', () => {
@@ -53,6 +57,23 @@ describe('daily sprint composition', () => {
 		)
 		expect(sourceContentUnlocked(16)).toBe(false)
 		expect(sourceContentUnlocked(17)).toBe(true)
+	})
+
+	it('can compose the sprint without waiting for remote sentence generation', async () => {
+		const fetchSpy = vi.fn()
+		vi.stubGlobal('window', {})
+		vi.stubGlobal('fetch', fetchSpy)
+
+		const queue = await loadDailySprint(userId, 8, {
+			targetLevel: 'B1',
+			sentenceLength: 'medium',
+			sceneAction: 'Ask opinion',
+			programWeek: 1,
+			generateFresh: false,
+		})
+
+		expect(queue.length).toBeGreaterThan(0)
+		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 
 	it('pulls open mistakes into the sprint as repair work', async () => {

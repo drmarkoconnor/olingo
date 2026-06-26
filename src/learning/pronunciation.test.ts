@@ -4,6 +4,7 @@ import {
 	getPronunciationPassage,
 	pronunciationScoreLabel,
 	recordPronunciationAttempt,
+	selectPronunciationPassage,
 } from '@/learning/pronunciation'
 import { db } from '@/storage/db'
 import {
@@ -55,6 +56,43 @@ describe('pronunciation records', () => {
 		expect(attempts).toHaveLength(1)
 		expect(attempts[0].score).toBe(94)
 		expect(attempts[0].passageId).toBe(passage.id)
+	})
+
+	it('rotates passages within the same curriculum stage', () => {
+		const passageIds = new Set(
+			Array.from({ length: 7 }, (_value, index) =>
+				getPronunciationPassage(1, `2026-06-${10 + index}`).id
+			)
+		)
+
+		expect(passageIds.size).toBeGreaterThan(1)
+	})
+
+	it('avoids repeating a passage already recorded today when alternatives exist', async () => {
+		const first = await selectPronunciationPassage(userId, 1, '2026-06-26')
+		await recordPronunciationAttempt({
+			userId,
+			dateKey: '2026-06-26',
+			sessionId: `${userId}:2026-06-26`,
+			passage: first,
+			activeMs: 3200,
+			feedback: {
+				transcript: first.text,
+				intelligibilityScore: 88,
+				passageCoverage: 90,
+				rhythmScore: 85,
+				problemSounds: [],
+				missedWords: [],
+				substitutions: [],
+				shortFeedback: 'Clear reading.',
+				practiceLines: [first.text],
+				provider: 'openai',
+			},
+		})
+
+		const second = await selectPronunciationPassage(userId, 1, '2026-06-26')
+
+		expect(second.id).not.toBe(first.id)
 	})
 
 	it('does not inflate coverage when no transcript is available', () => {

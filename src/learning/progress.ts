@@ -101,6 +101,7 @@ export type SprintOptions = {
 	sceneTitle?: string
 	sceneAction?: string
 	programWeek?: number
+	generateFresh?: boolean
 }
 
 export async function loadDailySprint(
@@ -109,15 +110,17 @@ export async function loadDailySprint(
 	options: SprintOptions = {}
 ) {
 	const programWeek = clampProgramWeek(options.programWeek ?? 1)
-	await ensureGeneratedSentencePool(userId, {
-		targetLevel: options.targetLevel,
-		sentenceLength: options.sentenceLength,
-		programWeek,
-		sceneId: options.sceneId,
-		sceneTitle: options.sceneTitle,
-		action: options.sceneAction,
-		minFresh: Math.max(16, limit * 2),
-	})
+	if (options.generateFresh !== false) {
+		await ensureGeneratedSentencePool(userId, {
+			targetLevel: options.targetLevel,
+			sentenceLength: options.sentenceLength,
+			programWeek,
+			sceneId: options.sceneId,
+			sceneTitle: options.sceneTitle,
+			action: options.sceneAction,
+			minFresh: Math.max(16, limit * 2),
+		})
+	}
 	await ensureExerciseStates(userId)
 	const generated = await loadGeneratedExercises(userId)
 	const allExercises = [...generated.map(generatedItemToExercise), ...exercises]

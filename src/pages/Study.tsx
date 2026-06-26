@@ -59,9 +59,11 @@ import {
 	getPronunciationPassage,
 	pronunciationScoreLabel,
 	recordPronunciationAttempt,
+	selectPronunciationPassage,
 	type PronunciationFeedback,
 } from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
+import { ensureGeneratedSentencePool } from '@/learning/generated-sentences'
 import {
 	loadVocabularyReviewQueue,
 	recordVocabularyReview,
@@ -187,6 +189,9 @@ export default function Study() {
 	const [transferError, setTransferError] = useState<string | null>(null)
 	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 	const [vocabularyQueue, setVocabularyQueue] = useState<VocabularyReviewCard[]>([])
+	const [pronunciationPassage, setPronunciationPassage] = useState(() =>
+		getPronunciationPassage(programWeek, todayKey)
+	)
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -209,18 +214,23 @@ export default function Study() {
 			const selectedAction = selectedScene.actions.includes(selectedSceneAction)
 				? selectedSceneAction
 				: selectedScene.actions[0]
-			const queue = await loadDailySprint(userId, sprintLimit, {
-				targetLevel,
-				sentenceLength,
-				sceneId: selectedScene.id,
-				sceneTitle: selectedScene.title,
-				sceneAction: selectedAction,
-				programWeek,
-			})
+			const [queue, dueMistakes, selectedPronunciationPassage] =
+				await Promise.all([
+					loadDailySprint(userId, sprintLimit, {
+						targetLevel,
+						sentenceLength,
+						sceneId: selectedScene.id,
+						sceneTitle: selectedScene.title,
+						sceneAction: selectedAction,
+						programWeek,
+						generateFresh: false,
+					}),
+					loadDueMistakes(userId, 3),
+					selectPronunciationPassage(userId, programWeek, todayKey),
+				])
 			const sentenceItems = queue
 				.filter((item) => !item.sourceMistakeId)
 				.slice(0, 10)
-			const dueMistakes = await loadDueMistakes(userId, 3)
 			const sceneId =
 				sentenceItems[0]?.exercise.sceneId ??
 				queue[0]?.exercise.sceneId ??
@@ -245,6 +255,7 @@ export default function Study() {
 			)
 			if (!mounted) return
 			setSceneCards(cards)
+			setPronunciationPassage(selectedPronunciationPassage)
 			setVocabularyQueue(vocabularyCards)
 			setSentenceQueue(sentenceItems)
 			setRepairMistakes(dueMistakes)
@@ -334,6 +345,32 @@ export default function Study() {
 		},
 		[current, sceneCards, selectedSceneId]
 	)
+
+	useEffect(() => {
+		if (loading) return
+		const timer = window.setTimeout(() => {
+			void ensureGeneratedSentencePool(userId, {
+				targetLevel,
+				sentenceLength,
+				programWeek,
+				sceneId: scene.id,
+				sceneTitle: scene.title,
+				action: selectedSceneAction,
+				minFresh: 18,
+			})
+		}, 750)
+		return () => window.clearTimeout(timer)
+	}, [
+		loading,
+		programWeek,
+		scene.id,
+		scene.title,
+		selectedSceneAction,
+		sentenceLength,
+		targetLevel,
+		userId,
+	])
+
 	const matchVocabulary = useMemo(
 		() =>
 			vocabularyQueue.slice(
@@ -358,10 +395,6 @@ export default function Study() {
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
 	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
 	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
-	const pronunciationPassage = useMemo(
-		() => getPronunciationPassage(programWeek),
-		[programWeek]
-	)
 	const progress = getDailySessionProgress(sessionItems)
 	const currentPhase = current ? getExercisePhase(current.exercise) : 'warmup'
 	const currentAction = current ? getExerciseAction(current.exercise) : 'Build'
