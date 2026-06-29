@@ -20,8 +20,60 @@ const feeds = [
 	},
 ]
 
-const cacheKey = 'sources/latest'
 const cacheTtlMs = 30 * 60 * 1000
+const youtubeRotationMs = 6 * 60 * 60 * 1000
+
+type YouTubeQuery = {
+	id: string
+	label: string
+	q: string
+	order?: 'date' | 'relevance'
+}
+
+const youtubeQueries: YouTubeQuery[] = [
+	{
+		id: 'food-family',
+		label: 'food and family conversation',
+		q: 'italiano cucina famiglia conversazione',
+	},
+	{
+		id: 'culture-milan',
+		label: 'Milan culture',
+		q: 'Milano cultura italiana intervista',
+	},
+	{
+		id: 'daily-life',
+		label: 'everyday Italian life',
+		q: 'vita quotidiana italiana conversazione',
+	},
+	{
+		id: 'sport-chat',
+		label: 'sport chat',
+		q: 'sport italiano intervista partita',
+	},
+	{
+		id: 'travel-cafe',
+		label: 'travel and cafe situations',
+		q: 'Italia viaggio bar caffe italiano',
+	},
+	{
+		id: 'local-news',
+		label: 'local news and opinions',
+		q: 'notizie locali italiane opinione',
+		order: 'date',
+	},
+	{
+		id: 'culture-events',
+		label: 'culture events',
+		q: 'eventi culturali Italia oggi',
+		order: 'date',
+	},
+	{
+		id: 'family-routine',
+		label: 'family routines',
+		q: 'famiglia italiana vita quotidiana',
+	},
+]
 
 declare const Netlify:
 	| {
@@ -69,6 +121,33 @@ function makePrompt(title: string) {
 	return `Ho letto questa notizia: "${title}". Che cosa ne pensi?`
 }
 
+function slugify(value: string) {
+	return value
+		.toLowerCase()
+		.normalize('NFD')
+		.replace(/[\u0300-\u036f]/g, '')
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-|-$/g, '')
+}
+
+function activeYoutubeQuery(now = new Date()): YouTubeQuery {
+	const override = getEnv('YOUTUBE_SEARCH_QUERY')?.trim()
+	if (override) {
+		return {
+			id: `env-${slugify(override).slice(0, 48) || 'custom'}`,
+			label: 'custom Netlify search query',
+			q: override,
+		}
+	}
+	const slot = Math.floor(now.getTime() / youtubeRotationMs)
+	return youtubeQueries[slot % youtubeQueries.length]
+}
+
+function cacheKeyFor(query: YouTubeQuery, now = new Date()) {
+	const slot = Math.floor(now.getTime() / cacheTtlMs)
+	return `sources/${query.id}/${slot}`
+}
+
 async function readFeed(feed: (typeof feeds)[number]) {
 	const response = await fetch(feed.url)
 	if (!response.ok) return []
@@ -96,7 +175,7 @@ async function readFeed(feed: (typeof feeds)[number]) {
 		.filter((item) => item.title && item.link) ?? []
 }
 
-async function readYouTube() {
+async function readYouTube(query: YouTubeQuery) {
 	const rawApiKey = getEnv('YOUTUBE_API_KEY') || ''
 	const keyShape = {
 		present: rawApiKey.length > 0,
@@ -113,21 +192,22 @@ async function readYouTube() {
 			configured: false,
 			error: null,
 			keyShape,
+			query,
 		}
 	}
 
-	const query = getEnv('YOUTUBE_SEARCH_QUERY')?.trim() || 'italiano cultura Milano'
 	const params = new URLSearchParams({
 		part: 'snippet',
 		type: 'video',
 		maxResults: '6',
-		q: query,
+		q: query.q,
 		relevanceLanguage: 'it',
 		regionCode: 'IT',
 		safeSearch: 'moderate',
 		videoEmbeddable: 'true',
 		key: apiKey,
 	})
+	if (query.order) params.set('order', query.order)
 
 	const response = await fetch(
 		`https://www.googleapis.com/youtube/v3/search?${params.toString()}`
@@ -150,6 +230,7 @@ async function readYouTube() {
 			configured: true,
 			error,
 			keyShape,
+			query,
 		}
 	}
 
@@ -203,6 +284,7 @@ async function readYouTube() {
 		configured: true,
 		error: null,
 		keyShape,
+		query,
 	}
 }
 
@@ -232,6 +314,11 @@ type SourcesResponse = {
 				startsWithAIza: boolean
 				hasWhitespace: boolean
 			}
+			query?: {
+				id: string
+				label: string
+				q: string
+			}
 		}
 		rss: {
 			count: number
@@ -243,7 +330,7 @@ type SourcesResponse = {
 	fetchedAt: string
 }
 
-async function readCachedSources() {
+async function readCachedSources(cacheKey: string) {
 	try {
 		const store = getStore({ name: 'content-cache' })
 		const cached = (await store.get(cacheKey, { type: 'json' })) as
@@ -264,7 +351,7 @@ async function readCachedSources() {
 	}
 }
 
-async function writeCachedSources(payload: SourcesResponse) {
+async function writeCachedSources(cacheKey: string, payload: SourcesResponse) {
 	try {
 		const store = getStore({ name: 'content-cache' })
 		await store.setJSON(cacheKey, payload)
@@ -276,11 +363,13 @@ export default async (req: Request) => {
 	const auth = await requireUser()
 	if (authFailed(auth)) return auth.response
 
-	const cached = await readCachedSources()
+	const query = activeYoutubeQuery()
+	const cacheKey = cacheKeyFor(query)
+	const cached = await readCachedSources(cacheKey)
 	if (cached) return Response.json(cached)
 
 	const [youtube, ...feedResults] = await Promise.all([
-		readYouTube(),
+		readYouTube(query),
 		...feeds.map(readFeed),
 	])
 	const rssItems = feedResults.flat()
@@ -293,6 +382,7 @@ export default async (req: Request) => {
 				count: youtube.items.length,
 				error: youtube.error,
 				keyShape: youtube.keyShape,
+				query: youtube.query,
 			},
 			rss: {
 				count: rssItems.length,
@@ -301,7 +391,7 @@ export default async (req: Request) => {
 		},
 		fetchedAt: new Date().toISOString(),
 	}
-	await writeCachedSources(payload)
+	await writeCachedSources(cacheKey, payload)
 	return Response.json(payload)
 }
 

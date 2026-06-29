@@ -87,6 +87,11 @@ type SourceDiagnostics = {
 		status: string
 		count: number
 		error: string | null
+		query?: {
+			id: string
+			label: string
+			q: string
+		}
 	}
 	rss?: {
 		count: number

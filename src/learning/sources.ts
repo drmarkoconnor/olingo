@@ -58,8 +58,8 @@ export const italianSources: ItalianSource[] = [
 		name: 'YouTube Italian Culture',
 		type: 'video',
 		topic: 'video',
-		url: 'https://www.youtube.com/results?search_query=italiano+cultura+Milano',
-		notes: 'Live video prompts load from YouTube when the server key is configured.',
+		url: 'https://www.youtube.com/results?search_query=italiano+vita+quotidiana+cultura',
+		notes: 'Live video prompts rotate across everyday Italian themes when the server key is configured.',
 	},
 ]
 

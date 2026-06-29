@@ -25,6 +25,11 @@ type SourceDiagnostics = {
 		status: string
 		count: number
 		error: string | null
+		query?: {
+			id: string
+			label: string
+			q: string
+		}
 	}
 	rss?: {
 		count: number
@@ -548,7 +553,8 @@ function getSourceNotes(
 
 	const youtube = diagnostics?.youtube
 	if (youtube?.status === 'ok') {
-		return `Live YouTube search is enabled. ${youtube.count} video prompts loaded.`
+		const theme = youtube.query?.label ? ` Theme: ${youtube.query.label}.` : ''
+		return `Live YouTube search is enabled. ${youtube.count} video prompts loaded.${theme}`
 	}
 
 	if (youtube?.configured) {
