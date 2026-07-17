@@ -47,6 +47,7 @@ type GeneratedPack = {
 		phase: string
 		action: string
 	}>
+	provider?: 'openai' | 'fallback'
 	cached?: boolean
 	savedCount?: number
 }
@@ -181,7 +182,7 @@ export default function Sources() {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					sourceItem: activePrompt,
-					level: 'B1',
+					level: targetLevel,
 					programWeek,
 				}),
 			})
@@ -206,7 +207,7 @@ export default function Sources() {
 					sceneId: 'piazza-newsstand',
 					sceneTitle: 'Piazza Newsstand',
 					action: 'Summarise',
-					provider: 'fallback',
+					provider: data.provider ?? 'fallback',
 					packId: data.id,
 				}
 			)
@@ -215,7 +216,7 @@ export default function Sources() {
 			setGeneratedPack({
 				id: `fallback-${activePrompt.id}`,
 				title: activePrompt.title,
-				level: 'B1',
+				level: targetLevel,
 				sourceName: activePrompt.sourceName,
 				exercises: [
 					{

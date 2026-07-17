@@ -57,6 +57,7 @@ import {
 } from '@/learning/sources'
 import {
 	getPronunciationPassage,
+	ensureGeneratedPronunciationPool,
 	pronunciationScoreLabel,
 	recordPronunciationAttempt,
 	selectPronunciationPassage,
@@ -64,7 +65,9 @@ import {
 } from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
 import { ensureGeneratedSentencePool } from '@/learning/generated-sentences'
+import { getLearningProfile } from '@/learning/learning-profile'
 import {
+	ensureGeneratedVocabularyPool,
 	loadVocabularyReviewQueue,
 	recordVocabularyReview,
 	type VocabularyReviewCard,
@@ -194,9 +197,14 @@ export default function Study() {
 	const [transferError, setTransferError] = useState<string | null>(null)
 	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 	const [vocabularyQueue, setVocabularyQueue] = useState<VocabularyReviewCard[]>([])
+	const sessionItemsRef = useRef<DailySessionItem[]>([])
 	const [pronunciationPassage, setPronunciationPassage] = useState(() =>
-		getPronunciationPassage(programWeek, todayKey)
+		getPronunciationPassage(programWeek, targetLevel, todayKey)
 	)
+
+	useEffect(() => {
+		sessionItemsRef.current = sessionItems
+	}, [sessionItems])
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -231,7 +239,7 @@ export default function Study() {
 						generateFresh: false,
 					}),
 					loadDueMistakes(userId, 3),
-					selectPronunciationPassage(userId, programWeek, todayKey),
+					selectPronunciationPassage(userId, programWeek, targetLevel, todayKey),
 				])
 			const sentenceItems = queue
 				.filter((item) => !item.sourceMistakeId)
@@ -350,27 +358,91 @@ export default function Study() {
 		},
 		[current, sceneCards, selectedSceneId]
 	)
+	const generationAction = scene.actions.includes(selectedSceneAction)
+		? selectedSceneAction
+		: scene.actions[0]
 
 	useEffect(() => {
 		if (loading) return
+		let cancelled = false
 		const timer = window.setTimeout(() => {
-			void ensureGeneratedSentencePool(userId, {
-				targetLevel,
-				sentenceLength,
-				programWeek,
-				sceneId: scene.id,
-				sceneTitle: scene.title,
-				action: selectedSceneAction,
-				minFresh: 18,
+			void (async () => {
+				const sentenceOptions = {
+					targetLevel,
+					sentenceLength,
+					programWeek,
+					sceneId: scene.id,
+					sceneTitle: scene.title,
+					action: generationAction,
+					minFresh: 18,
+				}
+				await Promise.all([
+					ensureGeneratedSentencePool(userId, sentenceOptions),
+					ensureGeneratedVocabularyPool(userId, scene.id, {
+						programWeek,
+						targetLevel,
+						minFresh: 24,
+					}),
+					ensureGeneratedPronunciationPool(userId, {
+						programWeek,
+						targetLevel,
+						minFresh: 6,
+					}),
+				])
+				if (cancelled) return
+
+				const latestItems = sessionItemsRef.current
+				const sentenceItem = latestItems.find((item) => item.type === 'sentence')
+				const matchItem = latestItems.find((item) => item.type === 'match')
+				const recallItem = latestItems.find((item) => item.type === 'recall')
+				const pronunciationItem = latestItems.find(
+					(item) => item.type === 'pronunciation'
+				)
+
+				if (!sentenceItem?.completedCount) {
+					const refreshed = await loadDailySprint(userId, 24, {
+						...sentenceOptions,
+						sceneAction: sentenceOptions.action,
+						generateFresh: false,
+					})
+					if (!cancelled) {
+						setSentenceQueue(
+							refreshed.filter((item) => !item.sourceMistakeId).slice(0, 10)
+						)
+					}
+				}
+				if (!matchItem?.completedCount && !recallItem?.completedCount) {
+					const refreshed = await loadVocabularyReviewQueue(userId, scene.id, {
+						programWeek,
+						targetLevel,
+						limit: 24,
+						dateKey: todayKey,
+					})
+					if (!cancelled) setVocabularyQueue(refreshed)
+				}
+				if (!pronunciationItem?.completedCount) {
+					const refreshed = await selectPronunciationPassage(
+						userId,
+						programWeek,
+						targetLevel,
+						todayKey
+					)
+					if (!cancelled) setPronunciationPassage(refreshed)
+				}
+			})().catch((error) => {
+				if (!cancelled) console.error(error)
 			})
 		}, 750)
-		return () => window.clearTimeout(timer)
+		return () => {
+			cancelled = true
+			window.clearTimeout(timer)
+		}
 	}, [
 		loading,
 		programWeek,
 		scene.id,
 		scene.title,
-		selectedSceneAction,
+		generationAction,
 		sentenceLength,
 		targetLevel,
 		userId,
@@ -399,6 +471,10 @@ export default function Study() {
 	)
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
 	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
+	const learningProfile = useMemo(
+		() => getLearningProfile(targetLevel),
+		[targetLevel]
+	)
 	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
 	const progress = getDailySessionProgress(sessionItems)
 	const currentPhase = current ? getExercisePhase(current.exercise) : 'warmup'
@@ -783,7 +859,7 @@ export default function Study() {
 							<MapPin size={14} />
 							{scene.location}
 						</span>
-						<span className="scene-pill">{scene.level}</span>
+						<span className="scene-pill">{targetLevel} practice</span>
 					</div>
 					<div>
 						<p className="eyebrow">Today&apos;s session</p>
@@ -818,7 +894,8 @@ export default function Study() {
 					</div>
 					<p>
 						{progress.completed} of {progress.planned} required activities done
-						{progress.bonus ? `, plus ${progress.bonus} bonus rep(s).` : '.'}
+						{progress.bonus ? `, plus ${progress.bonus} bonus rep(s).` : '.'}{' '}
+						{targetLevel} speech: {learningProfile.guidance}
 					</p>
 				</div>
 
@@ -1114,6 +1191,13 @@ function SentenceBuilder({
 	onSubmit: (event: FormEvent) => void
 }) {
 	const frameMeta = [
+		`${current.exercise.cefrLevel ?? current.levelBand ?? 'target'} ${
+			current.reviewKind === 'scheduled-review'
+				? 'scheduled review'
+				: current.reviewKind === 'repair'
+				? 'repair'
+				: 'new variation'
+		}`,
 		current.exercise.communicativeFunction,
 		current.exercise.tenseFocus,
 		current.exercise.vocabDomain,

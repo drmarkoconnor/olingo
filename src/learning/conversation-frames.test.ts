@@ -4,6 +4,7 @@ import {
 	countItalianWords,
 	getActiveTenseFocusesForWeek,
 	getConversationFramesForWeek,
+	getGenerationFramesForWeek,
 	recognitionOnlyTenses,
 } from '@/learning/conversation-frames'
 
@@ -51,5 +52,20 @@ describe('conversation frame matrix', () => {
 				['present', 'modal-infinitive', 'imperative'].includes(frame.tenseFocus)
 			)
 		).toBe(true)
+	})
+
+	it('prefers frames introduced at the selected advanced level', () => {
+		const b2 = getGenerationFramesForWeek(18, {
+			targetLevel: 'B2',
+			limit: 6,
+		})
+		const c1 = getGenerationFramesForWeek(18, {
+			targetLevel: 'C1',
+			limit: 6,
+		})
+
+		expect(b2[0].cefrLevel).toBe('B2')
+		expect(c1[0].cefrLevel).toBe('C1')
+		expect(c1.some((frame) => frame.tags.includes('reformulation'))).toBe(true)
 	})
 })

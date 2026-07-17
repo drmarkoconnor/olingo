@@ -49,6 +49,7 @@ type ConversationFramePayload = {
 	seedItalian: string
 	slotHints: string[]
 	tags: string[]
+	cefrLevel: CefrLevel
 }
 
 type Body = {
@@ -98,6 +99,7 @@ type GeneratedExercise = {
 	communicativeFunction: CommunicativeFunction
 	maxWords: number
 	utilityScore: number
+	cefrLevel: CefrLevel
 }
 
 const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
@@ -175,6 +177,7 @@ const sentencePackSchema = {
 					},
 					maxWords: { type: 'number' },
 					utilityScore: { type: 'number' },
+					cefrLevel: { type: 'string', enum: levels },
 				},
 				required: [
 					'promptEnglish',
@@ -197,6 +200,7 @@ const sentencePackSchema = {
 					'communicativeFunction',
 					'maxWords',
 					'utilityScore',
+					'cefrLevel',
 				],
 			},
 		},
@@ -868,6 +872,7 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 				communicativeFunction: frame.communicativeFunction,
 				maxWords,
 				utilityScore: frame.utilityScore,
+				cefrLevel: frame.cefrLevel,
 			}
 		})
 	}
@@ -1055,6 +1060,7 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			communicativeFunction,
 			maxWords: defaultMaxWordsFor(level, 'medium'),
 			utilityScore: 76,
+			cefrLevel: level,
 		}
 	})
 }
@@ -1066,6 +1072,9 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 	const level = normaliseLevel(body.level)
 	const sentenceLength = normaliseLength(body.sentenceLength)
 	const defaultMaxWords = defaultMaxWordsFor(level, sentenceLength)
+	const frameLevels = new Map(
+		(body.conversationFrames ?? []).map((frame) => [frame.id, frame.cefrLevel])
+	)
 	return exercises
 		.filter((exercise) => exercise.promptEnglish && exercise.targetItalian)
 		.filter((exercise) => promptIsCleanEnglish(exercise.promptEnglish))
@@ -1075,7 +1084,10 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 			const key = `${english}::${italian}`
 			const maxWords = clampMaxWords(exercise.maxWords, defaultMaxWords)
 			const utilityScore = clampUtilityScore(exercise.utilityScore, 0)
+			const frameLevel = frameLevels.get(exercise.frameId)
 			if (utilityScore < 70) return false
+			if (!levels.includes(exercise.cefrLevel)) return false
+			if (frameLevel && exercise.cefrLevel !== frameLevel) return false
 			if (wordCount(exercise.targetItalian) > maxWords) return false
 			if (isBannedSentence(english) || isBannedSentence(italian)) return false
 			if (seen.has(key)) return false
@@ -1147,7 +1159,8 @@ async function generateWithOpenAI(body: Body, count: number) {
 						requirements: [
 							'Do not repeat avoidItalian or avoidEnglish.',
 							'Do not produce near-duplicates inside this pack.',
-							'Every item must use one provided conversationFrame and copy its frameId, tenseFocus, vocabDomain, communicativeFunction, maxWords, and utilityScore.',
+							'Every item must use one provided conversationFrame and copy its frameId, tenseFocus, vocabDomain, communicativeFunction, maxWords, utilityScore, and cefrLevel.',
+							'At least 70 percent of the pack must use frames whose cefrLevel exactly matches the requested level; the remainder may consolidate a lower level.',
 							'Every targetItalian must be at or under the frame maxWords value.',
 							'Every utilityScore must be 70-100 and should reflect everyday usefulness.',
 							'Every promptEnglish should be a clear British English communicative intent.',
@@ -1212,6 +1225,10 @@ export default async (req: Request) => {
 		provider,
 		level: normaliseLevel(body.level),
 		programWeek: body.programWeek ?? null,
+		sceneId: body.sceneId ?? null,
+		sceneTitle: body.sceneTitle ?? null,
+		action: body.action ?? null,
+		sentenceLength: normaliseLength(body.sentenceLength),
 		exercises,
 		createdAt: new Date().toISOString(),
 	}

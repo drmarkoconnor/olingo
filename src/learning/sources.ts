@@ -80,6 +80,6 @@ export const fallbackSourceItems: SourceItem[] = [
 		link: 'https://www.ansa.it/lombardia/',
 		topic: 'Milan/Lombardy',
 		prompt:
-			'Ho visto una notizia su un evento in Lombardia. Che cosa ti interessa di piu?',
+			'Ho visto una notizia su un evento in Lombardia. Che cosa ti interessa di più?',
 	},
 ]

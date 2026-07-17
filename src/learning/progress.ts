@@ -21,6 +21,7 @@ import {
 } from '@/learning/curriculum'
 import {
 	difficultyForLevel,
+	ensureFrameSeedFallback,
 	ensureGeneratedSentencePool,
 	exerciseIsGenerated,
 	generatedItemToExercise,
@@ -39,6 +40,11 @@ import {
 	scheduleExerciseReview,
 } from '@/learning/scheduler'
 import { apiFetch } from '@/lib/api'
+import {
+	levelForDifficulty,
+	selectLevelBalanced,
+	type LevelBand,
+} from '@/learning/learning-profile'
 import { db, type ExerciseState, type MistakeItem } from '@/storage/db'
 import { addDays } from '@/utils/time'
 
@@ -47,6 +53,12 @@ export type SprintItem = {
 	state: ExerciseState
 	focusPhase?: SprintPhase
 	sourceMistakeId?: string
+	reviewKind?: 'new' | 'scheduled-review' | 'repair'
+	levelBand?: LevelBand
+}
+
+function exerciseLevel(exercise: Exercise): CefrLevel {
+	return exercise.cefrLevel ?? levelForDifficulty(exercise.difficulty)
 }
 
 function isDue(iso?: string | null) {
@@ -110,6 +122,14 @@ export async function loadDailySprint(
 	options: SprintOptions = {}
 ) {
 	const programWeek = clampProgramWeek(options.programWeek ?? 1)
+	await ensureFrameSeedFallback(userId, {
+		targetLevel: options.targetLevel,
+		sentenceLength: options.sentenceLength,
+		programWeek,
+		sceneId: options.sceneId,
+		sceneTitle: options.sceneTitle,
+		action: options.sceneAction,
+	})
 	if (options.generateFresh !== false) {
 		await ensureGeneratedSentencePool(userId, {
 			targetLevel: options.targetLevel,
@@ -134,7 +154,9 @@ export async function loadDailySprint(
 		.and((state) => !state.archived && isDue(state.nextDueAt))
 		.toArray()
 
-	const maxDifficulty = difficultyForLevel(options.targetLevel)
+	const targetLevel = options.targetLevel ?? 'B1'
+	const targetDifficulty = difficultyForLevel(targetLevel)
+	const maxDifficulty = Math.min(5, targetDifficulty + 1)
 	const eligibleExerciseIds = new Set(
 		allExercises
 			.filter((exercise) => exercise.difficulty <= maxDifficulty)
@@ -147,7 +169,15 @@ export async function loadDailySprint(
 		.filter((state) => eligibleExerciseIds.has(state.exerciseId))
 		.map((state) => {
 			const exercise = exerciseById.get(state.exerciseId)
-			return exercise ? { exercise, state } : null
+			return exercise
+				? {
+						exercise,
+						state,
+						reviewKind: seenProductionIds.has(exercise.id)
+							? ('scheduled-review' as const)
+							: ('new' as const),
+				  }
+				: null
 		})
 		.filter((item): item is NonNullable<typeof item> => Boolean(item))
 		.sort((a, b) => sortByCurriculumPriority(a, b, programWeek))
@@ -199,13 +229,13 @@ export async function loadDailySprint(
 		...generatedOther,
 		...sameSceneDue,
 		...otherDue,
-		...(freshDueItems.length ? [] : repeatDueItems),
+		...repeatDueItems.slice(0, Math.max(1, Math.round(limit * 0.2))),
 	], programWeek)
 	const dueIds = new Set(dueItems.map((item) => item.exercise.id))
 	const topUpItems: SprintItem[] = []
 	const topUpIds = new Set<string>()
 
-	if (orderedDue.length < limit) {
+	if (orderedDue.length < limit * 3) {
 		const allStates = await db.exerciseStates.where('userId').equals(userId).toArray()
 		const stateMap = new Map(allStates.map((state) => [state.exerciseId, state]))
 		const unseenExercises = allExercises.filter(
@@ -239,13 +269,35 @@ export async function loadDailySprint(
 			if (!eligibleExerciseIds.has(exercise.id)) continue
 			const state = stateMap.get(exercise.id)
 			if (!state || state.archived) continue
-			topUpItems.push({ exercise, state })
+			topUpItems.push({
+				exercise,
+				state,
+				reviewKind: seenProductionIds.has(exercise.id)
+					? 'scheduled-review'
+					: 'new',
+			})
 			topUpIds.add(exercise.id)
-			if (orderedDue.length + topUpItems.length >= limit) break
+			if (orderedDue.length + topUpItems.length >= limit * 3) break
 		}
 	}
 
-	return orderSprintItems([...orderedDue, ...topUpItems], programWeek).slice(0, limit)
+	const ordered = orderSprintItems([...orderedDue, ...topUpItems], programWeek)
+	const repairItemsForQueue = ordered.filter((item) => item.sourceMistakeId)
+	const balanced = selectLevelBalanced(
+		ordered.filter((item) => !item.sourceMistakeId),
+		(item) => exerciseLevel(item.exercise),
+		targetLevel,
+		Math.max(0, limit - repairItemsForQueue.length)
+	).map((item) => ({
+		...item,
+		levelBand:
+			exerciseLevel(item.exercise) === targetLevel
+				? ('target' as const)
+				: item.exercise.difficulty < targetDifficulty
+				? ('consolidation' as const)
+				: ('stretch' as const),
+	}))
+	return [...repairItemsForQueue, ...balanced].slice(0, limit)
 }
 
 async function loadMistakeRepairItems(
@@ -275,6 +327,7 @@ async function loadMistakeRepairItems(
 				state,
 				focusPhase: 'repair' as const,
 				sourceMistakeId: mistake.id,
+				reviewKind: 'repair' as const,
 			}
 		})
 		.filter((item): item is NonNullable<typeof item> => Boolean(item))

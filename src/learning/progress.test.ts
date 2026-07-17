@@ -76,6 +76,21 @@ describe('daily sprint composition', () => {
 		expect(fetchSpy).not.toHaveBeenCalled()
 	})
 
+	it('starts with exact-level speech frames while AI material is loading', async () => {
+		const queue = await loadDailySprint(userId, 8, {
+			targetLevel: 'C1',
+			sentenceLength: 'medium',
+			programWeek: 1,
+			generateFresh: false,
+		})
+
+		expect(queue.some((item) => item.exercise.cefrLevel === 'C1')).toBe(true)
+		expect(queue.some((item) => item.levelBand === 'target')).toBe(true)
+		expect(
+			queue.some((item) => item.exercise.communicativeFunction === 'repair')
+		).toBe(true)
+	})
+
 	it('pulls open mistakes into the sprint as repair work', async () => {
 		await ensureExerciseStates(userId)
 		const mistake: MistakeItem = {
@@ -130,6 +145,7 @@ describe('daily sprint composition', () => {
 					communicativeFunction: 'offer',
 					maxWords: 10,
 					utilityScore: 92,
+					cefrLevel: 'B1',
 				},
 			],
 			{

@@ -4,6 +4,7 @@ import {
 	getThematicVocabularyForScene,
 	loadVocabularyReviewQueue,
 	recordVocabularyReview,
+	saveGeneratedVocabulary,
 } from '@/learning/vocabulary'
 import { db } from '@/storage/db'
 
@@ -71,5 +72,53 @@ describe('thematic vocabulary review', () => {
 		expect(logs).toHaveLength(1)
 		expect(logs[0].wordId).toBe(card.id)
 		expect(logs[0].correct).toBe(1)
+	})
+
+	it('keeps only useful generated vocabulary at the exact selected level', async () => {
+		const saved = await saveGeneratedVocabulary(
+			[
+				{
+					italian: 'Non ne sono del tutto convinto',
+					english: 'I am not entirely convinced by it',
+					partOfSpeech: 'chunk',
+					domain: 'family',
+					level: 'B2',
+					utilityScore: 94,
+				},
+				{
+					italian: 'Mi sembra importante',
+					english: 'It seems important to me',
+					partOfSpeech: 'chunk',
+					domain: 'family',
+					level: 'B1',
+					utilityScore: 92,
+				},
+				{
+					italian: 'Questa frase contiene decisamente troppe parole per una scheda rapida',
+					english: 'This phrase is too long for a quick card',
+					partOfSpeech: 'chunk',
+					domain: 'family',
+					level: 'B2',
+					utilityScore: 95,
+				},
+			],
+			{ targetLevel: 'B2', provider: 'openai' }
+		)
+
+		expect(saved).toHaveLength(1)
+		expect(saved[0].level).toBe('B2')
+		expect(saved[0].source).toBe('ai')
+	})
+
+	it('has useful exact-level cards before an AI refill arrives', async () => {
+		const queue = await loadVocabularyReviewQueue(userId, 'milan-cafe', {
+			programWeek: 1,
+			targetLevel: 'C1',
+			limit: 8,
+			dateKey: '2026-07-17',
+		})
+
+		expect(queue.filter((card) => card.level === 'C1').length).toBeGreaterThanOrEqual(6)
+		expect(queue.some((card) => card.italian === 'in altre parole')).toBe(true)
 	})
 })

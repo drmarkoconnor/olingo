@@ -22,6 +22,10 @@ import {
 	type VocabDomain,
 } from '@/learning/conversation-frames'
 import { createExerciseState } from '@/learning/scheduler'
+import {
+	difficultyForCefr,
+	levelForDifficulty as cefrForDifficulty,
+} from '@/learning/learning-profile'
 import { apiFetch } from '@/lib/api'
 import { db, type GeneratedExerciseItem, type MistakeItem } from '@/storage/db'
 
@@ -59,12 +63,18 @@ type GeneratedExercisePayload = {
 	communicativeFunction?: CommunicativeFunction
 	maxWords?: number
 	utilityScore?: number
+	cefrLevel?: CefrLevel
 }
 
 type GeneratedPackResponse = {
 	exercises?: GeneratedExercisePayload[]
 	provider?: 'openai' | 'fallback'
 	packId?: string
+	level?: CefrLevel
+	programWeek?: number
+	sceneId?: string
+	sceneTitle?: string
+	action?: string
 }
 
 const packSize = 16
@@ -79,19 +89,11 @@ export function normaliseTargetLevel(value: unknown): CefrLevel {
 }
 
 export function difficultyForLevel(level?: CefrLevel): ExerciseDifficulty {
-	if (level === 'A1') return 1
-	if (level === 'A2') return 2
-	if (level === 'B2') return 4
-	if (level === 'C1') return 5
-	return 3
+	return difficultyForCefr(level ?? 'B1')
 }
 
 export function levelForDifficulty(difficulty: ExerciseDifficulty): CefrLevel {
-	if (difficulty <= 1) return 'A1'
-	if (difficulty === 2) return 'A2'
-	if (difficulty === 4) return 'B2'
-	if (difficulty >= 5) return 'C1'
-	return 'B1'
+	return cefrForDifficulty(difficulty)
 }
 
 export function sentenceFitsLength(
@@ -288,7 +290,6 @@ export async function saveGeneratedExercises(
 	options: GeneratedSentenceOptions & { provider?: 'openai' | 'fallback'; packId?: string }
 ) {
 	const targetLevel = normaliseTargetLevel(options.targetLevel)
-	const difficulty = difficultyForLevel(targetLevel)
 	const now = new Date().toISOString()
 	const stage = getCurriculumStage(options.programWeek)
 	const frames = getConversationFramesForWeek(options.programWeek, {
@@ -326,6 +327,10 @@ export async function saveGeneratedExercises(
 		const providedFrame = getFrameById(payload.frameId)
 		const fallbackFrame = frames[items.length % Math.max(1, frames.length)]
 		const frame = providedFrame ?? fallbackFrame
+		const itemLevel = isCefrLevel(payload.cefrLevel)
+			? payload.cefrLevel
+			: frame?.cefrLevels[0] ?? targetLevel
+		const difficulty = difficultyForLevel(itemLevel)
 		const maxWords = clampMaxWords(
 			payload.maxWords,
 			providedFrame?.maxWords ?? fallbackMaxWords
@@ -358,7 +363,7 @@ export async function saveGeneratedExercises(
 		)
 		const id = `${userId}:ai:${contentHash}`
 		const tags = unique([
-			targetLevel.toLowerCase(),
+			itemLevel.toLowerCase(),
 			'generated',
 			payload.communicativeFunction ?? frame?.communicativeFunction ?? '',
 			payload.tenseFocus ?? frame?.tenseFocus ?? '',
@@ -388,9 +393,9 @@ export async function saveGeneratedExercises(
 			tags,
 			phraseFamily,
 			difficulty,
-			cefrLevel: targetLevel,
+			cefrLevel: itemLevel,
 			generated: true,
-			phase: payload.phase ?? defaultPhase(targetLevel),
+			phase: payload.phase ?? defaultPhase(itemLevel),
 			action: payload.action ?? options.action ?? 'Build',
 			communicativeGoal: payload.communicativeGoal,
 			spokenCue:
@@ -398,7 +403,7 @@ export async function saveGeneratedExercises(
 				'Say a rough version quickly before typing. Good enough comes first.',
 			repairPrompts: unique(payload.repairPrompts ?? [promptEnglish]).slice(0, 3),
 			sourceId: `ai-generated:${options.packId ?? now}`,
-			curriculumWeeks: stage.weeks,
+			curriculumWeeks: providedFrame?.weeks ?? stage.weeks,
 			strand: 'output',
 			roundFocus: getExerciseRoundFocus({
 				id,
@@ -411,7 +416,7 @@ export async function saveGeneratedExercises(
 				tags,
 				phraseFamily,
 				difficulty,
-				cefrLevel: targetLevel,
+				cefrLevel: itemLevel,
 				construction,
 				frameId,
 				tenseFocus,
@@ -451,6 +456,49 @@ export async function saveGeneratedExercises(
 	return items
 }
 
+export async function ensureFrameSeedFallback(
+	userId: string,
+	options: GeneratedSentenceOptions
+) {
+	const targetLevel = normaliseTargetLevel(options.targetLevel)
+	const frames = getGenerationFramesForWeek(options.programWeek, {
+		targetLevel,
+		action: options.action,
+		limit: 18,
+	}).filter((frame) => frame.cefrLevel === targetLevel)
+	if (!frames.length) return []
+
+	return saveGeneratedExercises(
+		userId,
+		frames.map((frame) => ({
+			promptEnglish: frame.seedEnglish,
+			targetItalian: frame.seedItalian,
+			acceptedItalian: [frame.seedItalian],
+			hints: frame.slotHints.slice(0, 2),
+			tags: frame.tags,
+			phraseFamily: frame.label,
+			action: options.action ?? frame.label,
+			communicativeGoal: frame.label,
+			spokenCue: 'Say the useful frame quickly, then type it once.',
+			repairPrompts: [frame.seedEnglish],
+			construction: `frame:${frame.id}`,
+			frameId: frame.id,
+			tenseFocus: frame.tenseFocus,
+			vocabDomain: frame.vocabDomain,
+			communicativeFunction: frame.communicativeFunction,
+			maxWords: frame.maxWords,
+			utilityScore: frame.utilityScore,
+			cefrLevel: frame.cefrLevel,
+		})),
+		{
+			...options,
+			targetLevel,
+			provider: 'fallback',
+			packId: `frame-seed:${targetLevel}`,
+		}
+	)
+}
+
 function recentMistakeTags(mistakes: MistakeItem[]) {
 	const tags = mistakes.flatMap((mistake) => mistake.tags)
 	return unique(tags).slice(0, 8)
@@ -462,17 +510,34 @@ export async function ensureGeneratedSentencePool(
 ) {
 	const targetLevel = normaliseTargetLevel(options.targetLevel)
 	const minFresh = options.minFresh ?? freshPoolTarget
-	const generated = await loadGeneratedExercises(userId)
+	const refillAt = Math.max(6, Math.ceil(minFresh / 2))
+	let generated = await loadGeneratedExercises(userId)
 	const seenIds = await loadSeenProductionExerciseIds(userId)
-	const freshEligible = generated.filter(
+	let freshEligible = generated.filter(
 		(item) =>
 			item.cefrLevel === targetLevel &&
 			exerciseMatchesOptions(generatedItemToExercise(item), options) &&
 			!seenIds.has(item.id)
 	)
 
-	if (freshEligible.length >= minFresh || typeof window === 'undefined') {
+	if (freshEligible.length >= refillAt || typeof window === 'undefined') {
 		return generated
+	}
+
+	if (
+		!generated.some(
+			(item) => item.cefrLevel === targetLevel && item.source === 'ai'
+		)
+	) {
+		await restoreGeneratedSentenceLibrary(userId, { ...options, targetLevel })
+		generated = await loadGeneratedExercises(userId)
+		freshEligible = generated.filter(
+			(item) =>
+				item.cefrLevel === targetLevel &&
+				exerciseMatchesOptions(generatedItemToExercise(item), options) &&
+				!seenIds.has(item.id)
+		)
+		if (freshEligible.length >= refillAt) return generated
 	}
 
 	const stage = getCurriculumStage(options.programWeek)
@@ -526,6 +591,38 @@ export async function ensureGeneratedSentencePool(
 		return loadGeneratedExercises(userId)
 	} catch {
 		return generated
+	}
+}
+
+export async function restoreGeneratedSentenceLibrary(
+	userId: string,
+	options: GeneratedSentenceOptions
+) {
+	const targetLevel = normaliseTargetLevel(options.targetLevel)
+	try {
+		const response = await apiFetch(
+			`/api/generated-library?kind=sentences&level=${targetLevel}`
+		)
+		if (!response.ok) return []
+		const data = (await response.json()) as { packs?: GeneratedPackResponse[] }
+		const restored: GeneratedExerciseItem[] = []
+		for (const pack of data.packs ?? []) {
+			restored.push(
+				...(await saveGeneratedExercises(userId, pack.exercises ?? [], {
+					...options,
+					programWeek: pack.programWeek ?? options.programWeek,
+					sceneId: pack.sceneId ?? options.sceneId,
+					sceneTitle: pack.sceneTitle ?? options.sceneTitle,
+					action: pack.action ?? options.action,
+					targetLevel: pack.level ?? targetLevel,
+					provider: pack.provider,
+					packId: pack.packId,
+				}))
+			)
+		}
+		return restored
+	} catch {
+		return []
 	}
 }
 

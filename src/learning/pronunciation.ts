@@ -1,13 +1,24 @@
-import { db, type PronunciationAttempt } from '@/storage/db'
+import type { CefrLevel } from '@/learning/content'
+import { getActiveTenseFocusesForWeek } from '@/learning/conversation-frames'
+import { getCurriculumStage } from '@/learning/curriculum'
+import { apiFetch } from '@/lib/api'
+import {
+	db,
+	type GeneratedPronunciationPassage,
+	type PronunciationAttempt,
+} from '@/storage/db'
 
 export type PronunciationPassage = {
 	id: string
 	title: string
-	level: 'A2' | 'B1'
+	level: CefrLevel
 	weeks: [number, number]
 	text: string
 	focus: string[]
 	prepCue: string
+	maxWords?: number
+	utilityScore?: number
+	source?: 'seed' | 'ai' | 'fallback'
 }
 
 export type PronunciationFeedback = {
@@ -40,7 +51,7 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'At the table',
 		level: 'A2',
 		weeks: [1, 4],
-		text: 'Mi passi il sale, per favore? E sul tavolo, vicino al pane.',
+		text: 'Mi passi il sale, per favore? È sul tavolo, vicino al pane.',
 		focus: ['mi passi', 'sale', 'vicino'],
 		prepCue: 'Keep the request friendly and make the final vowels audible.',
 	},
@@ -58,7 +69,7 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Everyday plan',
 		level: 'A2',
 		weeks: [5, 8],
-		text: 'Posso venire piu tardi, ma devo prima fare la spesa e chiamare mia madre.',
+		text: 'Posso venire più tardi, ma devo prima fare la spesa e chiamare mia madre.',
 		focus: ['posso', 'devo', 'fare la spesa'],
 		prepCue: 'Keep posso and devo light, then land clearly on the infinitives.',
 	},
@@ -67,7 +78,7 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Before we leave',
 		level: 'A2',
 		weeks: [5, 8],
-		text: 'Devo prendere un caffe prima di partire, ma posso essere veloce.',
+		text: 'Devo prendere un caffè prima di partire, ma posso essere veloce.',
 		focus: ['devo prendere', 'prima di', 'veloce'],
 		prepCue: 'Make devo prendere one smooth phrase and do not rush partire.',
 	},
@@ -94,8 +105,8 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Phone call',
 		level: 'A2',
 		weeks: [9, 12],
-		text: 'Stamattina ho chiamato mio fratello. Mi ha detto che arrivava piu tardi.',
-		focus: ['ho chiamato', 'mi ha detto', 'piu tardi'],
+		text: 'Stamattina ho chiamato mio fratello. Mi ha detto che arrivava più tardi.',
+		focus: ['ho chiamato', 'mi ha detto', 'più tardi'],
 		prepCue: 'Use one clean pause between the two short sentences.',
 	},
 	{
@@ -103,9 +114,9 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Small problem',
 		level: 'A2',
 		weeks: [9, 12],
-		text: 'Ho comprato il pane, pero ho dimenticato il latte e la frutta.',
-		focus: ['ho comprato', 'pero', 'dimenticato'],
-		prepCue: 'Let pero mark the turn in the sentence.',
+		text: 'Ho comprato il pane, però ho dimenticato il latte e la frutta.',
+		focus: ['ho comprato', 'però', 'dimenticato'],
+		prepCue: 'Let però mark the turn in the sentence.',
 	},
 	{
 		id: 'pronoun-control',
@@ -121,7 +132,7 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'It is on the table',
 		level: 'B1',
 		weeks: [13, 16],
-		text: 'Il sale e sul tavolo. Lo prendo io e te lo passo subito.',
+		text: 'Il sale è sul tavolo. Lo prendo io e te lo passo subito.',
 		focus: ['lo prendo', 'te lo passo', 'subito'],
 		prepCue: 'Keep te lo as a small unit, not two heavy words.',
 	},
@@ -139,9 +150,9 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'A careful opinion',
 		level: 'B1',
 		weeks: [17, 20],
-		text: 'Secondo me la situazione puo migliorare, pero non sono sicuro che tutti siano d accordo.',
-		focus: ['secondo me', 'pero', 'd accordo'],
-		prepCue: 'Let secondo me start the opinion gently, then slow down before d accordo.',
+		text: "Secondo me la situazione può migliorare, però non sono sicuro che tutti siano d'accordo.",
+		focus: ['secondo me', 'però', "d'accordo"],
+		prepCue: "Let secondo me start the opinion gently, then slow down before d'accordo.",
 	},
 	{
 		id: 'opinion-local-issue',
@@ -157,8 +168,8 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Soft disagreement',
 		level: 'B1',
 		weeks: [17, 20],
-		text: 'Capisco quello che dici, pero non sono del tutto d accordo.',
-		focus: ['capisco', 'pero', 'd accordo'],
+		text: "Capisco quello che dici, però non sono del tutto d'accordo.",
+		focus: ['capisco', 'però', "d'accordo"],
 		prepCue: 'Sound warm, not defensive. Keep the last phrase slow.',
 	},
 	{
@@ -166,8 +177,8 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		title: 'Connected turn',
 		level: 'B1',
 		weeks: [21, 24],
-		text: 'Quando leggo una notizia, provo a spiegare perche e importante e che cosa cambiera.',
-		focus: ['quando', 'perche', 'cosa cambiera'],
+		text: 'Quando leggo una notizia, provo a spiegare perché è importante e che cosa cambierà.',
+		focus: ['quando', 'perché', 'cosa cambierà'],
 		prepCue: 'Make it one connected thought with a small pause after notizia.',
 	},
 	{
@@ -188,14 +199,88 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		focus: ['anche se', 'verrei', 'volentieri'],
 		prepCue: 'Let anche se introduce the contrast, then relax into verrei.',
 	},
+	{
+		id: 'a1-table-help',
+		title: 'A simple table request',
+		level: 'A1',
+		weeks: [1, 24],
+		text: 'Mi passi il pane? È qui sul tavolo.',
+		focus: ['clear vowels', 'mi passi', 'pane'],
+		prepCue: 'Use two short groups and let the question rise gently.',
+	},
+	{
+		id: 'a1-family-today',
+		title: 'Today with family',
+		level: 'A1',
+		weeks: [1, 24],
+		text: 'Oggi resto a casa con la mia famiglia.',
+		focus: ['oggi', 'resto', 'famiglia'],
+		prepCue: 'Keep every final vowel clear and unhurried.',
+	},
+	{
+		id: 'a1-cafe-order',
+		title: 'A café order',
+		level: 'A1',
+		weeks: [1, 24],
+		text: "Vorrei un caffè e un bicchiere d'acqua.",
+		focus: ['vorrei', 'caffè', 'acqua'],
+		prepCue: 'Join vorrei smoothly, then keep caffè clearly Italian.',
+	},
+	{
+		id: 'b2-soft-disagreement',
+		title: 'A qualified opinion',
+		level: 'B2',
+		weeks: [1, 24],
+		text: "Capisco il tuo punto, ma non sono del tutto d'accordo.",
+		focus: ['capisco', 'del tutto', "d'accordo"],
+		prepCue: 'Keep the tone warm and make the qualification one smooth phrase.',
+	},
+	{
+		id: 'b2-correct-detail',
+		title: 'Correcting a detail',
+		level: 'B2',
+		weeks: [1, 24],
+		text: 'Non proprio: intendevo domani mattina, non questa sera.',
+		focus: ['non proprio', 'intendevo', 'questa sera'],
+		prepCue: 'Pause after non proprio, then contrast the two times calmly.',
+	},
+	{
+		id: 'b2-clear-consequence',
+		title: 'A practical consequence',
+		level: 'B2',
+		weeks: [1, 24],
+		text: 'Siamo in ritardo, quindi li avviso e ci vediamo direttamente lì.',
+		focus: ['quindi', 'li avviso', 'direttamente'],
+		prepCue: 'Let quindi carry the turn and keep the pronouns light.',
+	},
+	{
+		id: 'c1-careful-reservation',
+		title: 'A careful reservation',
+		level: 'C1',
+		weeks: [1, 24],
+		text: 'A dire il vero, non ne sono del tutto convinto.',
+		focus: ['a dire il vero', 'non ne sono', 'convinto'],
+		prepCue: 'Use a measured opening, then let non ne sono flow together.',
+	},
+	{
+		id: 'c1-reformulate',
+		title: 'Reformulating clearly',
+		level: 'C1',
+		weeks: [1, 24],
+		text: 'In altre parole, serve un approccio diverso e più pratico.',
+		focus: ['in altre parole', 'approccio', 'più pratico'],
+		prepCue: 'Pause briefly after the reformulation marker, then stay conversational.',
+	},
+	{
+		id: 'c1-limit-claim',
+		title: 'Limiting a claim',
+		level: 'C1',
+		weeks: [1, 24],
+		text: 'Per quanto ne so, la decisione non è ancora definitiva.',
+		focus: ['per quanto ne so', 'decisione', 'definitiva'],
+		prepCue: 'Keep the opening light and place the emphasis on definitiva.',
+	},
 ]
-
-function matchingPassages(programWeek: number) {
-	const matches = pronunciationPassages.filter(
-		(passage) => programWeek >= passage.weeks[0] && programWeek <= passage.weeks[1]
-	)
-	return matches.length ? matches : [pronunciationPassages[0]]
-}
 
 function stableHash(value: string) {
 	let hash = 2166136261
@@ -206,18 +291,67 @@ function stableHash(value: string) {
 	return hash >>> 0
 }
 
-export function getPronunciationPassage(programWeek: number, dateKey?: string) {
-	const candidates = matchingPassages(programWeek)
+function normaliseText(value: string) {
+	return value
+		.toLowerCase()
+		.normalize('NFC')
+		.replace(/[.,!?;:()]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+}
+
+function wordCount(value: string) {
+	return normaliseText(value).split(' ').filter(Boolean).length
+}
+
+function tokenSimilarity(a: string, b: string) {
+	const aTokens = new Set(normaliseText(a).split(' ').filter(Boolean))
+	const bTokens = new Set(normaliseText(b).split(' ').filter(Boolean))
+	if (!aTokens.size || !bTokens.size) return 0
+	let overlap = 0
+	for (const token of aTokens) if (bTokens.has(token)) overlap += 1
+	return overlap / Math.max(aTokens.size, bTokens.size)
+}
+
+function matchingPassages(
+	programWeek: number,
+	targetLevel: CefrLevel,
+	generated: GeneratedPronunciationPassage[] = []
+) {
+	const candidates: PronunciationPassage[] = [...generated, ...pronunciationPassages]
+	const matches = candidates.filter(
+		(passage) =>
+			passage.level === targetLevel &&
+			programWeek >= passage.weeks[0] &&
+			programWeek <= passage.weeks[1]
+	)
+	return matches.length
+		? matches
+		: pronunciationPassages.filter((passage) => passage.level === targetLevel)
+}
+
+export function getPronunciationPassage(
+	programWeek: number,
+	targetLevel: CefrLevel,
+	dateKey?: string
+) {
+	const candidates = matchingPassages(programWeek, targetLevel)
 	if (!dateKey || candidates.length === 1) return candidates[0]
-	return candidates[stableHash(`${programWeek}:${dateKey}`) % candidates.length]
+	return candidates[stableHash(`${programWeek}:${targetLevel}:${dateKey}`) % candidates.length]
 }
 
 export async function selectPronunciationPassage(
 	userId: string,
 	programWeek: number,
+	targetLevel: CefrLevel,
 	dateKey: string
 ) {
-	const candidates = matchingPassages(programWeek)
+	const generated = await db.generatedPronunciationPassages
+		.where('userId')
+		.equals(userId)
+		.and((passage) => passage.retired !== 1 && passage.level === targetLevel)
+		.toArray()
+	const candidates = matchingPassages(programWeek, targetLevel, generated)
 	if (candidates.length === 1) return candidates[0]
 	const attempts = await db.pronunciationAttempts
 		.where('userId')
@@ -252,6 +386,205 @@ export async function selectPronunciationPassage(
 			(stableHash(`${dateKey}:${b.id}`) % 1_000_000)
 		)
 	})[0]
+}
+
+type GeneratedPassagePayload = {
+	title?: string
+	level?: CefrLevel
+	text?: string
+	focus?: string[]
+	prepCue?: string
+	maxWords?: number
+	utilityScore?: number
+}
+
+type PronunciationPackResponse = {
+	packId?: string
+	provider?: 'openai' | 'fallback'
+	passages?: GeneratedPassagePayload[]
+}
+
+export async function saveGeneratedPronunciationPassages(
+	userId: string,
+	passages: GeneratedPassagePayload[],
+	options: {
+		targetLevel: CefrLevel
+		programWeek: number
+		provider?: 'openai' | 'fallback'
+		packId?: string
+	}
+) {
+	const stage = getCurriculumStage(options.programWeek)
+	const existing = await db.generatedPronunciationPassages
+		.where('userId')
+		.equals(userId)
+		.toArray()
+	const seenTexts = [
+		...pronunciationPassages.map((passage) => normaliseText(passage.text)),
+		...existing.map((passage) => normaliseText(passage.text)),
+	]
+	const seen = new Set(seenTexts)
+	const now = new Date().toISOString()
+	const saved: GeneratedPronunciationPassage[] = []
+
+	for (const passage of passages) {
+		const text = passage.text?.trim() ?? ''
+		const title = passage.title?.trim() ?? ''
+		const maxWords = Math.max(8, Math.min(36, Math.round(passage.maxWords ?? 24)))
+		const utilityScore = Math.max(
+			0,
+			Math.min(100, Math.round(passage.utilityScore ?? 80))
+		)
+		const textKey = normaliseText(text)
+		if (!text || !title || seen.has(textKey)) continue
+		if (seenTexts.some((existingText) => tokenSimilarity(existingText, textKey) >= 0.84)) {
+			continue
+		}
+		if (passage.level && passage.level !== options.targetLevel) continue
+		if (wordCount(text) > maxWords || utilityScore < 75) continue
+		seen.add(textKey)
+		seenTexts.push(textKey)
+		const contentHash = stableHash(textKey).toString(36)
+		saved.push({
+			id: `${userId}:pronunciation-passage:${contentHash}`,
+			userId,
+			title,
+			level: options.targetLevel,
+			weeks: stage.weeks,
+			text,
+			focus: (passage.focus ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 4),
+			prepCue:
+				passage.prepCue?.trim() ||
+				'Read in calm sense groups and keep the final vowels clear.',
+			maxWords,
+			utilityScore,
+			source: options.provider === 'fallback' ? 'fallback' : 'ai',
+			contentHash,
+			createdAt: now,
+			lastUsedAt: null,
+			useCount: 0,
+			retired: 0,
+		})
+	}
+
+	if (saved.length) await db.generatedPronunciationPassages.bulkPut(saved)
+	return saved
+}
+
+export async function restoreGeneratedPronunciationLibrary(
+	userId: string,
+	targetLevel: CefrLevel,
+	programWeek: number
+) {
+	try {
+		const response = await apiFetch(
+			`/api/generated-library?kind=pronunciation&level=${targetLevel}`
+		)
+		if (!response.ok) return []
+		const data = (await response.json()) as { packs?: PronunciationPackResponse[] }
+		const restored: GeneratedPronunciationPassage[] = []
+		for (const pack of data.packs ?? []) {
+			restored.push(
+				...(await saveGeneratedPronunciationPassages(
+					userId,
+					pack.passages ?? [],
+					{
+						targetLevel,
+						programWeek,
+						provider: pack.provider,
+						packId: pack.packId,
+					}
+				))
+			)
+		}
+		return restored
+	} catch {
+		return []
+	}
+}
+
+export async function ensureGeneratedPronunciationPool(
+	userId: string,
+	options: { targetLevel: CefrLevel; programWeek: number; minFresh?: number }
+) {
+	const minFresh = Math.max(3, options.minFresh ?? 6)
+	const refillAt = Math.max(2, Math.ceil(minFresh / 2))
+	let allGenerated = await db.generatedPronunciationPassages
+		.where('userId')
+		.equals(userId)
+		.and((passage) => passage.retired !== 1 && passage.level === options.targetLevel)
+		.toArray()
+	let generated = allGenerated.filter(
+		(passage) =>
+			options.programWeek >= passage.weeks[0] &&
+			options.programWeek <= passage.weeks[1]
+	)
+	const attempts = await db.pronunciationAttempts
+		.where('userId')
+		.equals(userId)
+		.toArray()
+	const attemptedIds = new Set(attempts.map((attempt) => attempt.passageId))
+	let fresh = generated.filter((passage) => !attemptedIds.has(passage.id))
+	if (fresh.length >= refillAt || typeof window === 'undefined') return generated
+
+	if (!generated.length) {
+		await restoreGeneratedPronunciationLibrary(
+			userId,
+			options.targetLevel,
+			options.programWeek
+		)
+		allGenerated = await db.generatedPronunciationPassages
+			.where('userId')
+			.equals(userId)
+			.and(
+				(passage) =>
+					passage.retired !== 1 && passage.level === options.targetLevel
+			)
+			.toArray()
+		generated = allGenerated.filter(
+			(passage) =>
+				options.programWeek >= passage.weeks[0] &&
+				options.programWeek <= passage.weeks[1]
+		)
+		fresh = generated.filter((passage) => !attemptedIds.has(passage.id))
+		if (fresh.length >= refillAt) return generated
+	}
+
+	try {
+		const response = await apiFetch('/api/generate-pronunciation-pack', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				level: options.targetLevel,
+				programWeek: options.programWeek,
+				stage: getCurriculumStage(options.programWeek),
+				activeTenseFocuses: getActiveTenseFocusesForWeek(options.programWeek),
+				targetCount: Math.max(4, minFresh - fresh.length),
+				weakSounds: Array.from(
+					new Set(attempts.flatMap((attempt) => attempt.problemSounds))
+				).slice(0, 8),
+				avoidTexts: [
+					...pronunciationPassages.map((passage) => passage.text),
+					...allGenerated.map((passage) => passage.text),
+				].slice(-180),
+			}),
+		})
+		if (!response.ok) return generated
+		const pack = (await response.json()) as PronunciationPackResponse
+		await saveGeneratedPronunciationPassages(userId, pack.passages ?? [], {
+			targetLevel: options.targetLevel,
+			programWeek: options.programWeek,
+			provider: pack.provider,
+			packId: pack.packId,
+		})
+		return db.generatedPronunciationPassages
+			.where('userId')
+			.equals(userId)
+			.and((passage) => passage.retired !== 1 && passage.level === options.targetLevel)
+			.toArray()
+	} catch {
+		return generated
+	}
 }
 
 export function pronunciationScoreLabel(score: number) {

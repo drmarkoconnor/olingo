@@ -1,9 +1,14 @@
-import { getUser, type User } from '@netlify/identity'
+import { getUser, refreshSession, type User } from '@netlify/identity'
 import { json } from './http'
 
 type AuthResult = { user: User } | { response: Response }
 
 export async function requireUser(): Promise<AuthResult> {
+	try {
+		await refreshSession()
+	} catch {
+		// getUser below remains the source of truth when refresh is unavailable.
+	}
 	const user = await getUser()
 	if (!user) {
 		return {

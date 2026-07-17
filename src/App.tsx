@@ -88,13 +88,17 @@ export default function App() {
 }
 
 function TopRightStatus() {
-	const { email, localMode, name } = useAuth()
-	const statusLabel = localMode ? 'local practice' : email ?? name ?? 'signed in'
+	const { email, localMode, name, serverVerified } = useAuth()
+	const statusLabel = localMode
+		? 'local practice'
+		: serverVerified
+		? email ?? name ?? 'signed in'
+		: 'session offline'
 
 	return (
 		<div className="top-status">
 			<span>
-				{localMode ? <WifiOff size={14} /> : <Cloud size={14} />}
+				{localMode || !serverVerified ? <WifiOff size={14} /> : <Cloud size={14} />}
 				{statusLabel}
 			</span>
 		</div>

@@ -69,7 +69,7 @@ export type GenerationFrame = Pick<
 	| 'seedItalian'
 	| 'slotHints'
 	| 'tags'
->
+> & { cefrLevel: CefrLevel }
 
 export const recognitionOnlyTenses: RecognitionOnlyTense[] = [
 	'passato-remoto',
@@ -155,7 +155,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 6,
 		utilityScore: 96,
 		seedEnglish: 'It is on the table.',
-		seedItalian: 'E sul tavolo.',
+		seedItalian: 'È sul tavolo.',
 		slotHints: ['sul tavolo', 'in cucina', 'vicino al pane', 'accanto a te'],
 		tags: ['present', 'location', 'food'],
 	},
@@ -216,7 +216,7 @@ export const conversationFrames: ConversationFrame[] = [
 		utilityScore: 99,
 		seedEnglish: 'I did not understand.',
 		seedItalian: 'Non ho capito.',
-		slotHints: ['puoi ripetere', 'piu lentamente', 'qual e il binario'],
+		slotHints: ['puoi ripetere', 'più lentamente', 'qual è il binario'],
 		tags: ['repair', 'travel', 'present'],
 	},
 	{
@@ -260,7 +260,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 5,
 		utilityScore: 96,
 		seedEnglish: 'I have already paid.',
-		seedItalian: 'Ho gia pagato.',
+		seedItalian: 'Ho già pagato.',
 		slotHints: ['pagato', 'ordinato', 'chiamato', 'chiesto'],
 		tags: ['past', 'cafe', 'narrate'],
 	},
@@ -290,8 +290,8 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 6,
 		utilityScore: 98,
 		seedEnglish: 'I would like a coffee, please.',
-		seedItalian: 'Vorrei un caffe, per favore.',
-		slotHints: ['un caffe', 'un cappuccino', 'un bicchiere d acqua', 'il conto'],
+		seedItalian: 'Vorrei un caffè, per favore.',
+		slotHints: ['un caffè', 'un cappuccino', "un bicchiere d'acqua", 'il conto'],
 		tags: ['conditional', 'cafe', 'request'],
 	},
 	{
@@ -320,7 +320,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 9,
 		utilityScore: 91,
 		seedEnglish: 'I like it because it is simple.',
-		seedItalian: 'Mi piace perche e semplice.',
+		seedItalian: 'Mi piace perché è semplice.',
 		slotHints: ['semplice', 'chiaro', 'utile', 'troppo lungo'],
 		tags: ['reason', 'opinion', 'culture'],
 	},
@@ -366,7 +366,7 @@ export const conversationFrames: ConversationFrame[] = [
 		utilityScore: 92,
 		seedEnglish: 'Can I try this one?',
 		seedItalian: 'Posso provare questo?',
-		slotHints: ['questo', 'questa giacca', 'un altra taglia', 'il menu'],
+		slotHints: ['questo', 'questa giacca', "un'altra taglia", 'il menù'],
 		tags: ['modal', 'shopping', 'request'],
 	},
 	{
@@ -396,7 +396,7 @@ export const conversationFrames: ConversationFrame[] = [
 		utilityScore: 94,
 		seedEnglish: 'I feel better today.',
 		seedItalian: 'Oggi sto meglio.',
-		slotHints: ['meglio', 'male', 'un po stanco', 'bene'],
+		slotHints: ['meglio', 'male', "un po' stanco", 'bene'],
 		tags: ['health', 'present', 'react'],
 	},
 	{
@@ -425,7 +425,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 9,
 		utilityScore: 90,
 		seedEnglish: 'I chose the pasta because it looked good.',
-		seedItalian: 'Ho scelto la pasta perche sembrava buona.',
+		seedItalian: 'Ho scelto la pasta perché sembrava buona.',
 		slotHints: ['la pasta', 'il pesce', 'la pizza', 'sembrava buona'],
 		tags: ['past', 'reason', 'food'],
 	},
@@ -440,8 +440,8 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 6,
 		utilityScore: 88,
 		seedEnglish: 'I will call you later.',
-		seedItalian: 'Ti chiamero piu tardi.',
-		slotHints: ['piu tardi', 'domani', 'dopo pranzo', 'stasera'],
+		seedItalian: 'Ti chiamerò più tardi.',
+		slotHints: ['più tardi', 'domani', 'dopo pranzo', 'stasera'],
 		tags: ['future', 'travel', 'offer'],
 	},
 	{
@@ -455,9 +455,129 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 7,
 		utilityScore: 91,
 		seedEnglish: 'Could I have some water?',
-		seedItalian: 'Potrei avere un po d acqua?',
-		slotHints: ['un po d acqua', 'una sedia', 'un minuto', 'il conto'],
+		seedItalian: "Potrei avere un po' d'acqua?",
+		slotHints: ["un po' d'acqua", 'una sedia', 'un minuto', 'il conto'],
 		tags: ['conditional', 'health', 'request'],
+	},
+	{
+		id: 'repair-travel-b2-correct-detail',
+		label: 'Correct One Detail Calmly',
+		communicativeFunction: 'repair',
+		tenseFocus: 'present',
+		vocabDomain: 'travel',
+		weeks: [1, 24],
+		cefrLevels: ['B2', 'C1'],
+		maxWords: 7,
+		utilityScore: 95,
+		seedEnglish: 'Not exactly: I mean platform three.',
+		seedItalian: 'Non proprio: intendo il binario tre.',
+		slotHints: ['il binario tre', 'domani mattina', 'dopo pranzo', 'l altro ingresso'],
+		tags: ['repair', 'precision', 'travel'],
+	},
+	{
+		id: 'react-culture-b2-qualify-view',
+		label: 'Qualify An Opinion',
+		communicativeFunction: 'react',
+		tenseFocus: 'present',
+		vocabDomain: 'culture',
+		weeks: [1, 24],
+		cefrLevels: ['B2', 'C1'],
+		maxWords: 9,
+		utilityScore: 94,
+		seedEnglish: 'I see your point, but I do not entirely agree.',
+		seedItalian: 'Capisco il tuo punto, ma non concordo del tutto.',
+		slotHints: ['non concordo del tutto', 'ho qualche dubbio', 'dipende dal contesto'],
+		tags: ['opinion', 'qualification', 'culture'],
+	},
+	{
+		id: 'give-reason-family-b2-consequence',
+		label: 'Add A Clear Consequence',
+		communicativeFunction: 'give-reason',
+		tenseFocus: 'present',
+		vocabDomain: 'family',
+		weeks: [1, 24],
+		cefrLevels: ['B2', 'C1'],
+		maxWords: 10,
+		utilityScore: 92,
+		seedEnglish: 'We are late, so I will let them know now.',
+		seedItalian: 'Siamo in ritardo, quindi li avviso subito.',
+		slotHints: ['quindi li avviso', 'perciò aspettiamo', 'così evitiamo problemi'],
+		tags: ['consequence', 'family', 'planning'],
+	},
+	{
+		id: 'plan-sport-b2-condition',
+		label: 'Make A Conditional Plan',
+		communicativeFunction: 'plan',
+		tenseFocus: 'conditional',
+		vocabDomain: 'sport',
+		weeks: [17, 24],
+		cefrLevels: ['B2', 'C1'],
+		maxWords: 8,
+		utilityScore: 89,
+		seedEnglish: 'I would come, provided I finish in time.',
+		seedItalian: 'Verrei, purché finisca in tempo.',
+		slotHints: ['purché finisca', 'se trovo un biglietto', 'a meno che piova'],
+		tags: ['conditional', 'condition', 'sport'],
+	},
+	{
+		id: 'react-family-c1-honest-qualification',
+		label: 'State A Careful Reservation',
+		communicativeFunction: 'react',
+		tenseFocus: 'present',
+		vocabDomain: 'family',
+		weeks: [1, 24],
+		cefrLevels: ['C1'],
+		maxWords: 10,
+		utilityScore: 91,
+		seedEnglish: 'To be honest, I am not entirely convinced.',
+		seedItalian: 'A dire il vero, non ne sono del tutto convinto.',
+		slotHints: ['a dire il vero', 'non ne sono convinto', 'avrei qualche riserva'],
+		tags: ['stance', 'qualification', 'family'],
+	},
+	{
+		id: 'repair-home-c1-reformulate',
+		label: 'Reformulate The Main Point',
+		communicativeFunction: 'repair',
+		tenseFocus: 'present',
+		vocabDomain: 'home',
+		weeks: [1, 24],
+		cefrLevels: ['C1'],
+		maxWords: 8,
+		utilityScore: 90,
+		seedEnglish: 'In other words, we need a different approach.',
+		seedItalian: 'In altre parole, serve un approccio diverso.',
+		slotHints: ['in altre parole', 'detto altrimenti', 'il punto è che'],
+		tags: ['reformulation', 'repair', 'home'],
+	},
+	{
+		id: 'react-culture-c1-distinction',
+		label: 'Make A Useful Distinction',
+		communicativeFunction: 'react',
+		tenseFocus: 'present',
+		vocabDomain: 'culture',
+		weeks: [1, 24],
+		cefrLevels: ['C1'],
+		maxWords: 10,
+		utilityScore: 88,
+		seedEnglish: 'The point is not what we choose, but why.',
+		seedItalian: 'Il punto non è cosa scegliamo, ma perché.',
+		slotHints: ['il punto non è', 'la differenza sta in', 'conta soprattutto'],
+		tags: ['distinction', 'stance', 'culture'],
+	},
+	{
+		id: 'react-news-c1-limit-claim',
+		label: 'Limit A Claim Carefully',
+		communicativeFunction: 'react',
+		tenseFocus: 'present',
+		vocabDomain: 'local-news',
+		weeks: [17, 24],
+		cefrLevels: ['C1'],
+		maxWords: 9,
+		utilityScore: 90,
+		seedEnglish: 'As far as I know, it has not been decided yet.',
+		seedItalian: 'Per quanto ne so, non è ancora deciso.',
+		slotHints: ['per quanto ne so', 'a quanto pare', 'salvo nuove informazioni'],
+		tags: ['qualification', 'news', 'stance'],
 	},
 ]
 
@@ -491,6 +611,10 @@ function levelAllowed(frame: ConversationFrame, targetLevel?: CefrLevel) {
 	if (!targetLevel) return true
 	const targetRank = levelRank(targetLevel)
 	return frame.cefrLevels.some((level) => levelRank(level) <= targetRank)
+}
+
+function introducedAt(frame: ConversationFrame) {
+	return frame.cefrLevels[0]
 }
 
 function weekAllowed(frame: ConversationFrame, week: number) {
@@ -549,13 +673,15 @@ export function getConversationFramesForWeek(
 		.map((frame) => {
 			const actionScore =
 				actionFunctions?.includes(frame.communicativeFunction) ? 30 : 0
-			const currentStageScore =
+				const currentStageScore =
 				safeWeek >= frame.weeks[0] && safeWeek <= Math.min(frame.weeks[1], frame.weeks[0] + 5)
-					? 6
-					: 0
-			return {
-				frame,
-				score: frame.utilityScore + actionScore + currentStageScore,
+						? 6
+						: 0
+				const targetLevelScore =
+					options.targetLevel && introducedAt(frame) === options.targetLevel ? 36 : 0
+				return {
+					frame,
+					score: frame.utilityScore + actionScore + currentStageScore + targetLevelScore,
 			}
 		})
 		.sort((a, b) => b.score - a.score || a.frame.id.localeCompare(b.frame.id))
@@ -576,6 +702,7 @@ export function getGenerationFramesForWeek(
 		vocabDomain: frame.vocabDomain,
 		maxWords: frame.maxWords,
 		utilityScore: frame.utilityScore,
+		cefrLevel: introducedAt(frame),
 		seedEnglish: frame.seedEnglish,
 		seedItalian: frame.seedItalian,
 		slotHints: frame.slotHints,

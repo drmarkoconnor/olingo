@@ -27,7 +27,7 @@ describe('pronunciation records', () => {
 	})
 
 	it('stores read-aloud scores locally', async () => {
-		const passage = getPronunciationPassage(1)
+		const passage = getPronunciationPassage(1, 'A2')
 		await recordPronunciationAttempt({
 			userId,
 			dateKey: '2026-06-16',
@@ -61,7 +61,7 @@ describe('pronunciation records', () => {
 	it('rotates passages within the same curriculum stage', () => {
 		const passageIds = new Set(
 			Array.from({ length: 7 }, (_value, index) =>
-				getPronunciationPassage(1, `2026-06-${10 + index}`).id
+				getPronunciationPassage(1, 'A2', `2026-06-${10 + index}`).id
 			)
 		)
 
@@ -69,7 +69,7 @@ describe('pronunciation records', () => {
 	})
 
 	it('avoids repeating a passage already recorded today when alternatives exist', async () => {
-		const first = await selectPronunciationPassage(userId, 1, '2026-06-26')
+		const first = await selectPronunciationPassage(userId, 1, 'A2', '2026-06-26')
 		await recordPronunciationAttempt({
 			userId,
 			dateKey: '2026-06-26',
@@ -90,13 +90,13 @@ describe('pronunciation records', () => {
 			},
 		})
 
-		const second = await selectPronunciationPassage(userId, 1, '2026-06-26')
+		const second = await selectPronunciationPassage(userId, 1, 'A2', '2026-06-26')
 
 		expect(second.id).not.toBe(first.id)
 	})
 
 	it('does not inflate coverage when no transcript is available', () => {
-		const passage = getPronunciationPassage(1)
+		const passage = getPronunciationPassage(1, 'A2')
 		const feedback = deterministicFeedback(passage.text, '')
 
 		expect(feedback.transcript).toBe('')
@@ -104,6 +104,12 @@ describe('pronunciation records', () => {
 		expect(feedback.passageCoverage).toBe(0)
 		expect(feedback.rhythmScore).toBe(0)
 		expect(feedback.shortFeedback).toContain('could not detect')
+	})
+
+	it('selects a passage at the learner selected level', () => {
+		for (const level of ['A1', 'A2', 'B1', 'B2', 'C1'] as const) {
+			expect(getPronunciationPassage(12, level, '2026-07-17').level).toBe(level)
+		}
 	})
 
 	it('detects a Netlify value set to a full OPENAI_API_KEY line', () => {

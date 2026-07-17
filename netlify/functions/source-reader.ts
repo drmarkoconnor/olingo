@@ -38,6 +38,14 @@ type ReaderPayload = {
 	createdAt: string
 }
 
+const levelGuidance: Record<NonNullable<Body['level']>, string> = {
+	A1: 'Use present tense, concrete words, and sentences of roughly 4-8 words.',
+	A2: 'Use routine connectors, common modals or simple past chunks, and sentences of roughly 6-11 words.',
+	B1: 'Use clear connected prose with common reasons, events, and opinions in sentences of roughly 8-14 words.',
+	B2: 'Use natural qualification and consequences while keeping sentences easy to say aloud.',
+	C1: 'Use precise, idiomatic adult language without academic jargon or unnecessarily long sentences.',
+}
+
 const readerSchema = {
 	type: 'object',
 	additionalProperties: false,
@@ -85,31 +93,31 @@ function clean(value: unknown, fallback = '') {
 
 function cacheKey(sourceItem: SourceItem, level: string) {
 	const id = clean(sourceItem.id, clean(sourceItem.link, clean(sourceItem.title, 'source')))
-	return `readers/${encodeURIComponent(level)}/${encodeURIComponent(id)}`
+	return `readers-v2/${encodeURIComponent(level)}/${encodeURIComponent(id)}`
 }
 
 function fallbackReader(sourceItem: SourceItem, level: string) {
-	const title = clean(sourceItem.title, 'Una notizia italiana')
-	const summary = clean(
-		sourceItem.summary,
-		'Questa notizia presenta un tema utile per parlare in italiano.'
-	)
+	const discussionPrompts: Record<string, string> = {
+		A1: 'Questa notizia mi interessa perché...',
+		A2: 'Ho letto questa notizia e penso che...',
+		B1: 'Secondo me, questa notizia è importante perché...',
+		B2: 'Il punto principale mi sembra valido, anche se...',
+		C1: 'A mio avviso, la questione è più sfumata perché...',
+	}
 	return {
 		paragraphs: [
 			{
-				italian: `Questa notizia parla di ${title}.`,
-				english: `This news item is about ${title}.`,
+				italian: 'Questa notizia riguarda un tema attuale.',
+				english: 'This news item concerns a current topic.',
 			},
 			{
-				italian: summary,
-				english:
-					'Read the original source for the full report. This short version is for comprehension practice.',
+				italian: 'Il titolo presenta il punto principale.',
+				english: 'The headline presents the main point.',
 			},
 			{
-				italian:
-					'Per parlarne, posso dire una frase semplice e poi aggiungere la mia opinione.',
+				italian: 'Possiamo leggerla e poi dire la nostra opinione.',
 				english:
-					'To talk about it, I can say one simple sentence and then add my opinion.',
+					'We can read it and then give our opinion.',
 			},
 		],
 		glossary: [
@@ -117,7 +125,8 @@ function fallbackReader(sourceItem: SourceItem, level: string) {
 			{ italian: 'secondo me', english: 'in my opinion' },
 			{ italian: 'vale la pena', english: 'it is worth it' },
 		],
-		discussionPrompt: `Secondo me, questa notizia e interessante perche...`,
+		discussionPrompt:
+			discussionPrompts[level] ?? 'Secondo me, questa notizia è interessante perché...',
 	} satisfies Pick<ReaderPayload, 'paragraphs' | 'glossary' | 'discussionPrompt'>
 }
 
@@ -144,12 +153,15 @@ async function generateReader(sourceItem: SourceItem, level: string) {
 					role: 'user',
 					content: JSON.stringify({
 						level,
+						levelGuidance:
+							levelGuidance[level as NonNullable<Body['level']>] ?? levelGuidance.B1,
 						source: sourceItem,
 						requirements: [
-							'Write 3 short paragraphs in simple Italian.',
+							'Write 3 short paragraphs at the requested level.',
 							'Each Italian paragraph must have a clear English translation.',
 							'Use original learner prose derived from metadata, not copied article text.',
-							'Keep vocabulary suitable for the requested level.',
+							'Keep vocabulary, grammar, and sentence shape suitable for the requested level.',
+							'At B2 and C1 increase precision, not obscurity or sentence length.',
 							'Include 4-6 useful glossary items.',
 							'End with one simple Italian discussion prompt.',
 						],

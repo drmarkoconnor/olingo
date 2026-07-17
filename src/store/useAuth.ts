@@ -6,9 +6,11 @@ import {
 	logout,
 	oauthLogin,
 	onAuthChange,
+	refreshSession as refreshIdentitySession,
 	type User,
 } from '@netlify/identity'
 import { create } from 'zustand'
+import { authExpiredEvent } from '@/lib/api'
 
 type AuthState = {
 	userId: string
@@ -17,6 +19,7 @@ type AuthState = {
 	loading: boolean
 	ready: boolean
 	authenticated: boolean
+	serverVerified: boolean
 	localMode: boolean
 	inviteToken?: string | null
 	error?: string | null
@@ -46,12 +49,13 @@ function getOrCreateLocalUserId() {
 	return next
 }
 
-function authenticatedState(user: User): Partial<AuthState> {
+function authenticatedState(user: User, serverVerified = true): Partial<AuthState> {
 	return {
 		userId: user.id,
 		email: user.email ?? null,
 		name: user.name ?? null,
 		authenticated: true,
+		serverVerified,
 		loading: false,
 		ready: true,
 		inviteToken: null,
@@ -65,6 +69,7 @@ function localState(): Partial<AuthState> {
 		email: null,
 		name: 'Local practice',
 		authenticated: true,
+		serverVerified: true,
 		loading: false,
 		ready: true,
 		localMode: true,
@@ -79,12 +84,39 @@ function signedOutState(error?: string | null): Partial<AuthState> {
 		email: null,
 		name: null,
 		authenticated: false,
+		serverVerified: false,
 		loading: false,
 		ready: true,
 		localMode: false,
 		inviteToken: null,
 		error,
 	}
+}
+
+async function verifyServerSession() {
+	async function check() {
+		return fetch('/api/session', { credentials: 'include' })
+	}
+
+	try {
+		let response = await check()
+		if (response.status === 401) {
+			const refreshed = await refreshIdentitySession().catch(() => null)
+			if (refreshed) response = await check()
+		}
+		if (response.ok) return 'verified' as const
+		if (response.status === 401) return 'rejected' as const
+		return 'offline' as const
+	} catch {
+		return 'offline' as const
+	}
+}
+
+async function stateForUser(user: User) {
+	const verification = await verifyServerSession()
+	return verification === 'rejected'
+		? signedOutState('Your session expired. Please sign in again.')
+		: authenticatedState(user, verification === 'verified')
 }
 
 export const useAuth = create<AuthState>((set, get) => ({
@@ -94,6 +126,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 	loading: !localMode,
 	ready: localMode,
 	authenticated: localMode,
+	serverVerified: localMode,
 	localMode,
 	inviteToken: null,
 	error: null,
@@ -102,7 +135,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 		set({ loading: true, error: null })
 		try {
 			const user = await login(email.trim(), password)
-			set(authenticatedState(user))
+			set(await stateForUser(user))
 		} catch (error) {
 			set({ loading: false, ready: true, error: errorMessage(error) })
 		}
@@ -126,7 +159,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 		set({ loading: true, error: null })
 		try {
 			const user = await acceptInvite(token, password)
-			set(authenticatedState(user))
+			set(await stateForUser(user))
 		} catch (error) {
 			set({ loading: false, ready: true, error: errorMessage(error) })
 		}
@@ -163,11 +196,11 @@ export const useAuth = create<AuthState>((set, get) => ({
 				return
 			}
 			if (callback?.user) {
-				set(authenticatedState(callback.user))
+				set(await stateForUser(callback.user))
 				return
 			}
 			const user = await getUser()
-			set(user ? authenticatedState(user) : signedOutState(null))
+			set(user ? await stateForUser(user) : signedOutState(null))
 		} catch (error) {
 			set(signedOutState(errorMessage(error)))
 		}
@@ -178,6 +211,13 @@ export const useAuth = create<AuthState>((set, get) => ({
 
 if (typeof window !== 'undefined' && !localMode) {
 	onAuthChange((_event, user) => {
-		useAuth.setState(user ? authenticatedState(user) : signedOutState(null))
+		if (!user) {
+			useAuth.setState(signedOutState(null))
+			return
+		}
+		void stateForUser(user).then((state) => useAuth.setState(state))
+	})
+	window.addEventListener(authExpiredEvent, () => {
+		useAuth.setState(signedOutState('Your session expired. Please sign in again.'))
 	})
 }
