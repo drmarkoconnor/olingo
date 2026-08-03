@@ -55,6 +55,10 @@ type ConversationFramePayload = {
 type Body = {
 	level?: CefrLevel
 	programWeek?: number
+	sessionFocus?: string
+	sessionFocusLabel?: string
+	sessionDomain?: 'mixed' | VocabDomain
+	challengeMode?: string
 	stage?: {
 		title?: string
 		goals?: string[]
@@ -208,6 +212,33 @@ const sentencePackSchema = {
 	required: ['exercises'],
 } as const
 
+const validationSchema = {
+	type: 'object',
+	additionalProperties: false,
+	properties: {
+		reviews: {
+			type: 'array',
+			items: {
+				type: 'object',
+				additionalProperties: false,
+				properties: {
+					index: { type: 'number' },
+					valid: { type: 'boolean' },
+					reason: { type: 'string' },
+				},
+				required: ['index', 'valid', 'reason'],
+			},
+		},
+	},
+	required: ['reviews'],
+} as const
+
+type ContentHistory = {
+	italian: string[]
+	english: string[]
+	updatedAt?: string
+}
+
 function outputText(data: any) {
 	if (typeof data.output_text === 'string') return data.output_text
 	const text = data.output
@@ -322,487 +353,6 @@ function promptIsCleanEnglish(promptEnglish: string) {
 	return true
 }
 
-const domainSlots: Record<
-	VocabDomain,
-	{
-		objects: { en: string; it: string }[]
-		tasks: { en: string; it: string }[]
-		places: { en: string; it: string }[]
-		times: { en: string; it: string }[]
-		adjectives: { en: string; it: string }[]
-		participles: { en: string; it: string }[]
-		imperfects: { en: string; it: string }[]
-	}
-> = {
-	food: {
-		objects: [
-			{ en: 'the salt', it: 'il sale' },
-			{ en: 'the bread', it: 'il pane' },
-			{ en: 'the water', it: 'l acqua' },
-			{ en: 'the plate', it: 'il piatto' },
-		],
-		tasks: [
-			{ en: 'dinner', it: 'la cena' },
-			{ en: 'the table', it: 'la tavola' },
-			{ en: 'the shopping', it: 'la spesa' },
-		],
-		places: [
-			{ en: 'on the table', it: 'sul tavolo' },
-			{ en: 'in the kitchen', it: 'in cucina' },
-			{ en: 'next to you', it: 'accanto a te' },
-		],
-		times: [
-			{ en: 'after dinner', it: 'dopo cena' },
-			{ en: 'now', it: 'adesso' },
-			{ en: 'later', it: 'piu tardi' },
-		],
-		adjectives: [
-			{ en: 'good', it: 'buono' },
-			{ en: 'simple', it: 'semplice' },
-			{ en: 'too salty', it: 'troppo salato' },
-		],
-		participles: [
-			{ en: 'chosen', it: 'scelto' },
-			{ en: 'ordered', it: 'ordinato' },
-			{ en: 'brought', it: 'portato' },
-		],
-		imperfects: [
-			{ en: 'ate', it: 'mangiavo' },
-			{ en: 'cooked', it: 'cucinavo' },
-		],
-	},
-	family: {
-		objects: [
-			{ en: 'my brother', it: 'mio fratello' },
-			{ en: 'my daughter', it: 'mia figlia' },
-			{ en: 'the keys', it: 'le chiavi' },
-		],
-		tasks: [
-			{ en: 'dinner', it: 'la cena' },
-			{ en: 'the children', it: 'i bambini' },
-			{ en: 'the plan', it: 'il programma' },
-		],
-		places: [
-			{ en: 'at home', it: 'a casa' },
-			{ en: 'in the kitchen', it: 'in cucina' },
-			{ en: 'at mum s', it: 'da mamma' },
-		],
-		times: [
-			{ en: 'today', it: 'oggi' },
-			{ en: 'tonight', it: 'stasera' },
-			{ en: 'this weekend', it: 'questo weekend' },
-		],
-		adjectives: [
-			{ en: 'important', it: 'importante' },
-			{ en: 'easy', it: 'facile' },
-			{ en: 'clear', it: 'chiaro' },
-		],
-		participles: [
-			{ en: 'called', it: 'chiamato' },
-			{ en: 'seen', it: 'visto' },
-			{ en: 'helped', it: 'aiutato' },
-		],
-		imperfects: [
-			{ en: 'played', it: 'giocavo' },
-			{ en: 'went', it: 'andavo' },
-		],
-	},
-	sport: {
-		objects: [
-			{ en: 'the match', it: 'la partita' },
-			{ en: 'the tickets', it: 'i biglietti' },
-			{ en: 'the team', it: 'la squadra' },
-		],
-		tasks: [
-			{ en: 'the match', it: 'la partita' },
-			{ en: 'the tickets', it: 'i biglietti' },
-		],
-		places: [
-			{ en: 'at the bar', it: 'al bar' },
-			{ en: 'at the stadium', it: 'allo stadio' },
-			{ en: 'outside', it: 'fuori' },
-		],
-		times: [
-			{ en: 'after the match', it: 'dopo la partita' },
-			{ en: 'at eight', it: 'alle otto' },
-			{ en: 'tomorrow', it: 'domani' },
-		],
-		adjectives: [
-			{ en: 'good', it: 'buona' },
-			{ en: 'close', it: 'combattuta' },
-			{ en: 'slow', it: 'lenta' },
-		],
-		participles: [
-			{ en: 'watched', it: 'guardato' },
-			{ en: 'lost', it: 'perso' },
-		],
-		imperfects: [
-			{ en: 'played', it: 'giocavo' },
-			{ en: 'watched', it: 'guardavo' },
-		],
-	},
-	cafe: {
-		objects: [
-			{ en: 'a coffee', it: 'un caffe' },
-			{ en: 'the bill', it: 'il conto' },
-			{ en: 'a table', it: 'un tavolo' },
-		],
-		tasks: [
-			{ en: 'the order', it: 'l ordine' },
-			{ en: 'the bill', it: 'il conto' },
-		],
-		places: [
-			{ en: 'at the bar', it: 'al bar' },
-			{ en: 'outside', it: 'fuori' },
-			{ en: 'near the window', it: 'vicino alla finestra' },
-		],
-		times: [
-			{ en: 'later', it: 'dopo' },
-			{ en: 'tomorrow', it: 'domani' },
-			{ en: 'after coffee', it: 'dopo il caffe' },
-		],
-		adjectives: [
-			{ en: 'good', it: 'buono' },
-			{ en: 'busy', it: 'pieno' },
-			{ en: 'quiet', it: 'tranquillo' },
-		],
-		participles: [
-			{ en: 'paid', it: 'pagato' },
-			{ en: 'ordered', it: 'ordinato' },
-			{ en: 'asked', it: 'chiesto' },
-		],
-		imperfects: [
-			{ en: 'drank', it: 'bevevo' },
-			{ en: 'came', it: 'venivo' },
-		],
-	},
-	shopping: {
-		objects: [
-			{ en: 'this one', it: 'questo' },
-			{ en: 'another size', it: 'un altra taglia' },
-			{ en: 'the receipt', it: 'lo scontrino' },
-		],
-		tasks: [
-			{ en: 'this one', it: 'questo' },
-			{ en: 'another size', it: 'un altra taglia' },
-		],
-		places: [
-			{ en: 'in the shop', it: 'nel negozio' },
-			{ en: 'near the till', it: 'vicino alla cassa' },
-		],
-		times: [
-			{ en: 'now', it: 'adesso' },
-			{ en: 'later', it: 'piu tardi' },
-		],
-		adjectives: [
-			{ en: 'expensive', it: 'caro' },
-			{ en: 'useful', it: 'utile' },
-		],
-		participles: [
-			{ en: 'bought', it: 'comprato' },
-			{ en: 'tried', it: 'provato' },
-		],
-		imperfects: [
-			{ en: 'bought', it: 'compravo' },
-			{ en: 'looked for', it: 'cercavo' },
-		],
-	},
-	travel: {
-		objects: [
-			{ en: 'platform two', it: 'il binario due' },
-			{ en: 'the ticket', it: 'il biglietto' },
-			{ en: 'the exit', it: 'l uscita' },
-		],
-		tasks: [
-			{ en: 'the ticket', it: 'il biglietto' },
-			{ en: 'the platform', it: 'il binario' },
-		],
-		places: [
-			{ en: 'at the station', it: 'in stazione' },
-			{ en: 'on platform two', it: 'al binario due' },
-			{ en: 'near the exit', it: 'vicino all uscita' },
-		],
-		times: [
-			{ en: 'later', it: 'piu tardi' },
-			{ en: 'at six', it: 'alle sei' },
-			{ en: 'tomorrow', it: 'domani' },
-		],
-		adjectives: [
-			{ en: 'clear', it: 'chiaro' },
-			{ en: 'late', it: 'in ritardo' },
-		],
-		participles: [
-			{ en: 'missed', it: 'perso' },
-			{ en: 'found', it: 'trovato' },
-		],
-		imperfects: [
-			{ en: 'waited', it: 'aspettavo' },
-			{ en: 'travelled', it: 'viaggiavo' },
-		],
-	},
-	home: {
-		objects: [
-			{ en: 'the keys', it: 'le chiavi' },
-			{ en: 'the phone', it: 'il telefono' },
-			{ en: 'the bag', it: 'la borsa' },
-		],
-		tasks: [
-			{ en: 'the kitchen', it: 'la cucina' },
-			{ en: 'the table', it: 'il tavolo' },
-		],
-		places: [
-			{ en: 'at home', it: 'a casa' },
-			{ en: 'on the table', it: 'sul tavolo' },
-			{ en: 'in the kitchen', it: 'in cucina' },
-		],
-		times: [
-			{ en: 'today', it: 'oggi' },
-			{ en: 'later', it: 'dopo' },
-		],
-		adjectives: [
-			{ en: 'ready', it: 'pronto' },
-			{ en: 'open', it: 'aperto' },
-		],
-		participles: [
-			{ en: 'lost', it: 'perso' },
-			{ en: 'found', it: 'trovato' },
-		],
-		imperfects: [
-			{ en: 'stayed', it: 'stavo' },
-			{ en: 'worked', it: 'lavoravo' },
-		],
-	},
-	health: {
-		objects: [
-			{ en: 'some water', it: 'un po d acqua' },
-			{ en: 'a chair', it: 'una sedia' },
-			{ en: 'a minute', it: 'un minuto' },
-		],
-		tasks: [
-			{ en: 'a minute', it: 'un minuto' },
-			{ en: 'some water', it: 'un po d acqua' },
-		],
-		places: [
-			{ en: 'here', it: 'qui' },
-			{ en: 'inside', it: 'dentro' },
-		],
-		times: [
-			{ en: 'today', it: 'oggi' },
-			{ en: 'now', it: 'adesso' },
-		],
-		adjectives: [
-			{ en: 'better', it: 'meglio' },
-			{ en: 'tired', it: 'stanco' },
-		],
-		participles: [
-			{ en: 'slept', it: 'dormito' },
-			{ en: 'rested', it: 'riposato' },
-		],
-		imperfects: [
-			{ en: 'felt', it: 'stavo' },
-			{ en: 'slept', it: 'dormivo' },
-		],
-	},
-	culture: {
-		objects: [
-			{ en: 'the film', it: 'il film' },
-			{ en: 'the book', it: 'il libro' },
-			{ en: 'the concert', it: 'il concerto' },
-		],
-		tasks: [
-			{ en: 'the film', it: 'il film' },
-			{ en: 'the concert', it: 'il concerto' },
-		],
-		places: [
-			{ en: 'at the cinema', it: 'al cinema' },
-			{ en: 'in the square', it: 'in piazza' },
-		],
-		times: [
-			{ en: 'later', it: 'dopo' },
-			{ en: 'tomorrow', it: 'domani' },
-		],
-		adjectives: [
-			{ en: 'interesting', it: 'interessante' },
-			{ en: 'slow', it: 'lento' },
-			{ en: 'clear', it: 'chiaro' },
-		],
-		participles: [
-			{ en: 'seen', it: 'visto' },
-			{ en: 'read', it: 'letto' },
-		],
-		imperfects: [
-			{ en: 'watched', it: 'guardavo' },
-			{ en: 'read', it: 'leggevo' },
-		],
-	},
-	'local-news': {
-		objects: [
-			{ en: 'the news', it: 'la notizia' },
-			{ en: 'the problem', it: 'il problema' },
-			{ en: 'the decision', it: 'la decisione' },
-		],
-		tasks: [
-			{ en: 'the news', it: 'la notizia' },
-			{ en: 'the decision', it: 'la decisione' },
-		],
-		places: [
-			{ en: 'here', it: 'qui' },
-			{ en: 'in town', it: 'in citta' },
-		],
-		times: [
-			{ en: 'today', it: 'oggi' },
-			{ en: 'this week', it: 'questa settimana' },
-		],
-		adjectives: [
-			{ en: 'important', it: 'importante' },
-			{ en: 'serious', it: 'serio' },
-			{ en: 'useful', it: 'utile' },
-		],
-		participles: [
-			{ en: 'read', it: 'letto' },
-			{ en: 'understood', it: 'capito' },
-		],
-		imperfects: [
-			{ en: 'seemed', it: 'sembrava' },
-			{ en: 'changed', it: 'cambiava' },
-		],
-	},
-}
-
-function pick<T>(items: T[], index: number) {
-	return items[index % items.length]
-}
-
-function variantForFrame(frame: ConversationFramePayload, index: number) {
-	const slots = domainSlots[frame.vocabDomain]
-	const object = pick(slots.objects, index)
-	const task = pick(slots.tasks, index + 1)
-	const place = pick(slots.places, index + 2)
-	const time = pick(slots.times, index + 3)
-	const adjective = pick(slots.adjectives, index + 4)
-	const participle = pick(slots.participles, index + 5)
-	const imperfect = pick(slots.imperfects, index + 6)
-
-	if (frame.tenseFocus === 'imperative') {
-		return {
-			en: `Pass me ${object.en}, please.`,
-			it: `Passami ${object.it}, per favore.`,
-			keyVerb: 'passare',
-			construction: 'imperative-request',
-		}
-	}
-	if (frame.tenseFocus === 'modal-infinitive') {
-		return {
-			en: `Can I help with ${task.en}?`,
-			it: `Posso aiutare con ${task.it}?`,
-			keyVerb: 'potere',
-			construction: 'modal-infinitive',
-		}
-	}
-	if (frame.tenseFocus === 'passato-prossimo') {
-		return {
-			en: `I have already ${participle.en} ${object.en}.`,
-			it: `Ho gia ${participle.it} ${object.it}.`,
-			keyVerb: 'avere',
-			construction: 'passato-prossimo',
-		}
-	}
-	if (frame.tenseFocus === 'imperfect') {
-		return {
-			en: `When I was younger, I ${imperfect.en} here.`,
-			it: `Da giovane ${imperfect.it} qui.`,
-			keyVerb: imperfect.it,
-			construction: 'imperfect-background',
-		}
-	}
-	if (frame.tenseFocus === 'future') {
-		return {
-			en: `We will meet ${time.en}.`,
-			it: `Ci vedremo ${time.it}.`,
-			keyVerb: 'vedere',
-			construction: 'future-plan',
-		}
-	}
-	if (frame.tenseFocus === 'conditional') {
-		return {
-			en: `I would like ${object.en}, please.`,
-			it: `Vorrei ${object.it}, per favore.`,
-			keyVerb: 'volere',
-			construction: 'conditional-request',
-		}
-	}
-	if (frame.tenseFocus === 'subjunctive-chunk') {
-		return {
-			en: `I think it is ${adjective.en}.`,
-			it: `Penso che sia ${adjective.it}.`,
-			keyVerb: 'pensare',
-			construction: 'subjunctive-chunk-opinion',
-		}
-	}
-	if (frame.communicativeFunction === 'repair') {
-		return {
-			en: 'I did not understand well.',
-			it: 'Non ho capito bene.',
-			keyVerb: 'capire',
-			construction: 'conversation-repair',
-		}
-	}
-	if (frame.communicativeFunction === 'locate') {
-		return {
-			en: `${object.en} is ${place.en}.`,
-			it: `${object.it} e ${place.it}.`,
-			keyVerb: 'essere',
-			construction: 'present-location',
-		}
-	}
-	if (frame.communicativeFunction === 'ask-back') {
-		return {
-			en: `And what are you doing ${time.en}?`,
-			it: `E tu che fai ${time.it}?`,
-			keyVerb: 'fare',
-			construction: 'present-question',
-		}
-	}
-	if (frame.communicativeFunction === 'refuse-politely') {
-		return {
-			en: `Sorry, I cannot come ${time.en}.`,
-			it: `Mi dispiace, ${time.it} non posso.`,
-			keyVerb: 'potere',
-			construction: 'polite-refusal',
-		}
-	}
-	if (frame.communicativeFunction === 'give-reason') {
-		return {
-			en: `I like it because it is ${adjective.en}.`,
-			it: `Mi piace perche e ${adjective.it}.`,
-			keyVerb: 'piacere',
-			construction: 'present-reason',
-		}
-	}
-	if (frame.communicativeFunction === 'react') {
-		return {
-			en: `I like it, but it is ${adjective.en}.`,
-			it: `Mi piace, ma e ${adjective.it}.`,
-			keyVerb: 'piacere',
-			construction: 'present-reaction',
-		}
-	}
-	if (frame.communicativeFunction === 'plan') {
-		return {
-			en: `See you ${time.en}.`,
-			it: `Ci vediamo ${time.it}.`,
-			keyVerb: 'vedere',
-			construction: 'present-plan',
-		}
-	}
-	return {
-		en: frame.seedEnglish,
-		it: frame.seedItalian,
-		keyVerb: frame.tags[0] ?? 'fare',
-		construction: `${frame.tenseFocus}-${frame.communicativeFunction}`,
-	}
-}
-
 function levelGuidance(level: CefrLevel) {
 	if (level === 'A1') {
 		return 'A1: present tense, essere/avere/fare, simple questions, family, routines, short direct sentences.'
@@ -831,17 +381,15 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 		(frame) => frame.utilityScore >= 70 && frame.maxWords <= 12
 	)
 	if (frames.length) {
-		return Array.from({ length: count }, (_, index) => {
-			const frame = frames[index % frames.length]
-			const variant = variantForFrame(frame, index)
-			const maxWords = clampMaxWords(frame.maxWords, defaultMaxWordsFor(level, 'medium'))
-			const useSeed = wordCount(variant.it) > maxWords
-			const targetItalian = useSeed ? frame.seedItalian : variant.it
-			const promptEnglish = useSeed ? frame.seedEnglish : variant.en
+		return frames.slice(0, count).map((frame) => {
+			const maxWords = clampMaxWords(
+				frame.maxWords,
+				defaultMaxWordsFor(level, 'medium')
+			)
 			return {
-				promptEnglish,
-				targetItalian,
-				acceptedItalian: [targetItalian],
+				promptEnglish: frame.seedEnglish,
+				targetItalian: frame.seedItalian,
+				acceptedItalian: [frame.seedItalian],
 				hints: [
 					`Frame: ${frame.label}.`,
 					`Keep it short: ${frame.maxWords} words or fewer.`,
@@ -860,11 +408,11 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 				communicativeGoal: `${frame.communicativeFunction} in a ${frame.vocabDomain} situation.`,
 				spokenCue: 'Say the useful version quickly, then type it.',
 				repairPrompts: [
-					promptEnglish,
-					`Change one detail but keep the same frame: ${promptEnglish}`,
+					frame.seedEnglish,
+					`Change one detail but keep the same pattern: ${frame.seedEnglish}`,
 				],
-				keyVerb: variant.keyVerb,
-				construction: variant.construction,
+				keyVerb: frame.tags[0] ?? 'fare',
+				construction: `frame:${frame.id}`,
 				npcLine: '',
 				frameId: frame.id,
 				tenseFocus: frame.tenseFocus,
@@ -876,193 +424,7 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 			}
 		})
 	}
-	const stage = body.stage
-	const verbs = stage?.verbs?.length ? stage.verbs : ['fare', 'dire', 'andare']
-	const topics = stage?.topics?.length ? stage.topics : ['family', 'everyday life']
-	const families = stage?.phraseFamilies?.length
-		? stage.phraseFamilies
-		: ['Generated sentence production']
-	const situations = [
-		{
-			en: 'at dinner with my family',
-			it: 'a cena con la mia famiglia',
-			personEn: 'my daughter',
-			personIt: 'mia figlia',
-			activityEn: 'prepare the pasta',
-			activityIt: 'preparare la pasta',
-			placeEn: 'in the kitchen',
-			placeIt: 'in cucina',
-			objectEn: 'the table',
-			objectIt: 'il tavolo',
-		},
-		{
-			en: 'before the football match',
-			it: 'prima della partita',
-			personEn: 'my brother',
-			personIt: 'mio fratello',
-			activityEn: 'watch the match',
-			activityIt: 'guardare la partita',
-			placeEn: 'at the bar',
-			placeIt: 'al bar',
-			objectEn: 'the tickets',
-			objectIt: 'i biglietti',
-		},
-		{
-			en: 'during a coffee with friends',
-			it: 'durante un caffe con amici',
-			personEn: 'my friend',
-			personIt: 'la mia amica',
-			activityEn: 'have a coffee',
-			activityIt: 'prendere un caffe',
-			placeEn: 'in town',
-			placeIt: 'in centro',
-			objectEn: 'the bill',
-			objectIt: 'il conto',
-		},
-		{
-			en: 'after a family visit',
-			it: 'dopo una visita in famiglia',
-			personEn: 'my mother',
-			personIt: 'mia madre',
-			activityEn: 'go for a walk',
-			activityIt: 'fare una passeggiata',
-			placeEn: 'in the park',
-			placeIt: 'nel parco',
-			objectEn: 'the bag',
-			objectIt: 'la borsa',
-		},
-		{
-			en: 'at a small cultural event',
-			it: 'a un piccolo evento culturale',
-			personEn: 'the group',
-			personIt: 'il gruppo',
-			activityEn: 'listen to the music',
-			activityIt: 'ascoltare la musica',
-			placeEn: 'in the square',
-			placeIt: 'in piazza',
-			objectEn: 'the programme',
-			objectIt: 'il programma',
-		},
-		{
-			en: 'while choosing food',
-			it: 'mentre scegliamo da mangiare',
-			personEn: 'the waiter',
-			personIt: 'il cameriere',
-			activityEn: 'order something',
-			activityIt: 'ordinare qualcosa',
-			placeEn: 'at the restaurant',
-			placeIt: 'al ristorante',
-			objectEn: 'the menu',
-			objectIt: 'il menu',
-		},
-	]
-	const templates = [
-		(s: (typeof situations)[number]) => ({
-			en: `I want to speak more calmly ${s.en}.`,
-			it: `Voglio parlare con piu calma ${s.it}.`,
-			construction: 'modal-infinitive',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `Can I help ${s.personEn} ${s.en}?`,
-			it: `Posso aiutare ${s.personIt} ${s.it}?`,
-			construction: 'modal-question',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `I have to ${s.activityEn} before leaving.`,
-			it: `Devo ${s.activityIt} prima di partire.`,
-			construction: 'dovere-infinitive',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `Yesterday I saw ${s.personEn} ${s.en}.`,
-			it: `Ieri ho visto ${s.personIt} ${s.it}.`,
-			construction: 'past-event',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `In my opinion, this is a good idea ${s.en}.`,
-			it: `Secondo me, questa e una buona idea ${s.it}.`,
-			construction: 'opinion-frame',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `Can you tell me where ${s.objectEn} is?`,
-			it: `Puoi dirmi dove si trova ${s.objectIt}?`,
-			construction: 'question-place',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `I do not understand what happened ${s.en}.`,
-			it: `Non capisco che cosa e successo ${s.it}.`,
-			construction: 'repair-question',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `We can talk about it later ${s.en}.`,
-			it: `Possiamo parlarne piu tardi ${s.it}.`,
-			construction: 'modal-pronoun',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `I brought ${s.objectEn} because it was useful.`,
-			it: `Ho portato ${s.objectIt} perche era utile.`,
-			construction: 'past-reason',
-		}),
-		(s: (typeof situations)[number]) => ({
-			en: `I would like to understand the plan ${s.en}.`,
-			it: `Vorrei capire il programma ${s.it}.`,
-			construction: 'conditional-request',
-		}),
-	]
-
-	return Array.from({ length: count }, (_, index) => {
-		const situation = situations[index % situations.length]
-		const base = templates[index % templates.length](situation)
-		const verb = verbs[index % verbs.length]
-		const topic = topics[index % topics.length]
-		const phraseFamily = families[index % families.length]
-		const tenseFocus: TenseFocus = base.construction.includes('past')
-			? 'passato-prossimo'
-			: base.construction.includes('conditional')
-			? 'conditional'
-			: base.construction.includes('modal')
-			? 'modal-infinitive'
-			: 'present'
-		const communicativeFunction: CommunicativeFunction =
-			base.construction.includes('question') || base.construction.includes('request')
-				? 'request'
-				: base.construction.includes('repair')
-				? 'repair'
-				: base.construction.includes('reason')
-				? 'give-reason'
-				: base.construction.includes('past')
-				? 'narrate'
-				: 'plan'
-		const vocabDomain: VocabDomain = topic.includes('family')
-			? 'family'
-			: topic.includes('food')
-			? 'food'
-			: topic.includes('news')
-			? 'local-news'
-			: 'home'
-		return {
-			promptEnglish: base.en,
-			targetItalian: base.it,
-			acceptedItalian: [base.it],
-			hints: [`Use ${verb} as your anchor verb.`, `Focus: ${base.construction}.`],
-			tags: [level.toLowerCase(), 'generated', base.construction],
-			phraseFamily,
-			phase: 'produce',
-			action: body.action || 'Build',
-			communicativeGoal: 'Say the idea quickly enough for conversation.',
-			spokenCue: 'Say it once roughly, then type the version you meant.',
-			repairPrompts: [base.en, `Change one detail: ${base.en}`],
-			keyVerb: verb,
-			construction: base.construction,
-			npcLine: '',
-			frameId: `legacy-${base.construction}`,
-			tenseFocus,
-			vocabDomain,
-			communicativeFunction,
-			maxWords: defaultMaxWordsFor(level, 'medium'),
-			utilityScore: 76,
-			cefrLevel: level,
-		}
-	})
+	return []
 }
 
 function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: Body) {
@@ -1072,8 +434,8 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 	const level = normaliseLevel(body.level)
 	const sentenceLength = normaliseLength(body.sentenceLength)
 	const defaultMaxWords = defaultMaxWordsFor(level, sentenceLength)
-	const frameLevels = new Map(
-		(body.conversationFrames ?? []).map((frame) => [frame.id, frame.cefrLevel])
+	const frames = new Map(
+		(body.conversationFrames ?? []).map((frame) => [frame.id, frame])
 	)
 	return exercises
 		.filter((exercise) => exercise.promptEnglish && exercise.targetItalian)
@@ -1084,10 +446,26 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 			const key = `${english}::${italian}`
 			const maxWords = clampMaxWords(exercise.maxWords, defaultMaxWords)
 			const utilityScore = clampUtilityScore(exercise.utilityScore, 0)
-			const frameLevel = frameLevels.get(exercise.frameId)
+			const frame = frames.get(exercise.frameId)
 			if (utilityScore < 70) return false
 			if (!levels.includes(exercise.cefrLevel)) return false
-			if (frameLevel && exercise.cefrLevel !== frameLevel) return false
+			if (exercise.cefrLevel !== level) return false
+			if (
+				frame &&
+				(exercise.cefrLevel !== frame.cefrLevel ||
+					exercise.tenseFocus !== frame.tenseFocus ||
+					exercise.vocabDomain !== frame.vocabDomain ||
+					exercise.communicativeFunction !== frame.communicativeFunction)
+			) {
+				return false
+			}
+			if (
+				body.sessionDomain &&
+				body.sessionDomain !== 'mixed' &&
+				exercise.vocabDomain !== body.sessionDomain
+			) {
+				return false
+			}
 			if (wordCount(exercise.targetItalian) > maxWords) return false
 			if (isBannedSentence(english) || isBannedSentence(italian)) return false
 			if (seen.has(key)) return false
@@ -1136,17 +514,23 @@ async function generateWithOpenAI(body: Body, count: number) {
 				{
 					role: 'system',
 					content:
-						'You generate Italian sentence-production drills for one learner. Return only schema-valid JSON. Create fresh, natural, spoken Italian prompts from the provided conversation frames. Use patterned variety: repeat useful grammar frames, vary concrete details.',
+						'You design short Italian speaking microcycles for one learner. Return only schema-valid JSON. Create natural modern spoken Italian from the supplied frames. Repeat a useful pattern while changing one concrete detail at a time. Accuracy of the English meaning and Italian model is essential.',
 				},
 				{
 					role: 'user',
 					content: JSON.stringify({
-						task: `Generate exactly ${count} unique English-to-Italian production drills.`,
+						task: `Generate exactly ${count} unique short speaking drills for one coherent practice session.`,
 						level,
 						levelGuidance: levelGuidance(level),
 						sentenceLength,
 						lengthGuidance: lengthGuidance(sentenceLength),
 						stage: body.stage,
+						sessionFocus: {
+							id: body.sessionFocus ?? 'adaptive',
+							label: body.sessionFocusLabel ?? body.sessionFocus ?? 'adaptive',
+							domain: body.sessionDomain ?? 'mixed',
+							challenge: body.challengeMode ?? 'stretch',
+						},
 						activeTenseFocuses: body.activeTenseFocuses ?? body.stage?.tenseFocuses ?? [],
 						recognitionOnlyTenses: body.recognitionOnlyTenses ?? [],
 						conversationFrames: body.conversationFrames ?? [],
@@ -1160,16 +544,20 @@ async function generateWithOpenAI(body: Body, count: number) {
 							'Do not repeat avoidItalian or avoidEnglish.',
 							'Do not produce near-duplicates inside this pack.',
 							'Every item must use one provided conversationFrame and copy its frameId, tenseFocus, vocabDomain, communicativeFunction, maxWords, utilityScore, and cefrLevel.',
-							'At least 70 percent of the pack must use frames whose cefrLevel exactly matches the requested level; the remainder may consolidate a lower level.',
+							'Every item must be at the exact requested CEFR level. Increase independence and pragmatic precision at higher levels, not sentence length.',
 							'Every targetItalian must be at or under the frame maxWords value.',
 							'Every utilityScore must be 70-100 and should reflect everyday usefulness.',
 							'Every promptEnglish should be a clear British English communicative intent.',
 							'promptEnglish must be pure English: no Italian words, no mixed-language phrases, and no meta instructions such as "Use it in a conversation".',
 							'Every targetItalian should be a natural sentence the learner could say aloud.',
+							'Every promptEnglish must be an exact, unambiguous translation of targetItalian, including person, number, tense, and time relationships.',
+							'npcLine must be a short natural Italian line from another speaker which makes the learner response sensible; do not put an English instruction there.',
 							'Use common adult situations: food, family, sport, cafe, shopping, travel, home, health, culture, or local news.',
 							'Reject surreal, abstract, literary, classroom-only, or low-utility sentences.',
 							'Do not actively drill recognitionOnlyTenses; mention them only if needed for recognition.',
 							'Keep grammar systematic: vary vocabulary and concrete details, but reuse the same frame enough to build speed.',
+							'For each chosen frame, create two to four related variations before moving on. Change only one or two slots between adjacent variations.',
+							'When practising grammar or fluency, use high-frequency familiar vocabulary. When practising vocabulary, keep the grammar familiar.',
 							'Reward spoken adequacy: sentences should be usable before they are elegant.',
 						],
 						avoidItalian: (body.avoidItalian ?? []).slice(-180),
@@ -1199,6 +587,131 @@ async function generateWithOpenAI(body: Body, count: number) {
 	}
 }
 
+async function validateWithOpenAI(
+	body: Body,
+	exercises: GeneratedExercise[]
+): Promise<GeneratedExercise[] | null> {
+	const apiKey = getEnv('OPENAI_API_KEY')
+	if (!apiKey || !exercises.length) return null
+	const level = normaliseLevel(body.level)
+	const response = await fetch('https://api.openai.com/v1/responses', {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			'Content-Type': 'application/json',
+		},
+		body: JSON.stringify({
+			model:
+				getEnv('OPENAI_VALIDATION_MODEL') ||
+				getEnv('OPENAI_CONTENT_MODEL') ||
+				getEnv('OPENAI_MODEL') ||
+				'gpt-5.4-mini',
+			store: false,
+			input: [
+				{
+					role: 'system',
+					content:
+						'You are an independent Italian teaching-content reviewer. Reject an item instead of silently repairing it. Check exact bilingual meaning, natural contemporary spoken Italian, CEFR fit, practical usefulness, and the supplied frame constraints. Return only schema-valid JSON.',
+				},
+				{
+					role: 'user',
+					content: JSON.stringify({
+						level,
+						focus: body.sessionFocus,
+						domain: body.sessionDomain,
+						frames: body.conversationFrames ?? [],
+						requirements: [
+							'English and Italian must express the same person, number, tense, modality, and time relationship.',
+							'Italian must sound natural in an ordinary adult conversation.',
+							'The item must match its frameId metadata and exact requested CEFR level.',
+							'The target must stay within maxWords and avoid abstract, surreal, literary, or classroom-only content.',
+							'npcLine, when present, must be natural Italian and make targetItalian a sensible response.',
+						],
+						exercises: exercises.map((exercise, index) => ({ index, ...exercise })),
+					}),
+				},
+			],
+			text: {
+				format: {
+					type: 'json_schema',
+					name: 'italian_content_validation',
+					strict: true,
+					schema: validationSchema,
+				},
+			},
+		}),
+	})
+	if (!response.ok) return null
+	const data = await response.json()
+	const text = outputText(data)
+	if (!text) return null
+	try {
+		const parsed = JSON.parse(text) as {
+			reviews?: Array<{ index?: number; valid?: boolean }>
+		}
+		const validIndexes = new Set(
+			(parsed.reviews ?? [])
+				.filter((review) => review.valid && Number.isInteger(review.index))
+				.map((review) => Number(review.index))
+		)
+		return exercises.filter((_, index) => validIndexes.has(index))
+	} catch {
+		return null
+	}
+}
+
+function mergeHistory(current: string[], additions: string[]) {
+	const seen = new Set<string>()
+	const merged: string[] = []
+	for (const value of [...current, ...additions]) {
+		const key = normaliseSentence(value)
+		if (!key || seen.has(key)) continue
+		seen.add(key)
+		merged.push(value)
+	}
+	return merged
+}
+
+async function loadContentHistory(userId: string) {
+	const store = getStore({ name: 'content-history', consistency: 'strong' })
+	const key = `users/${encodeURIComponent(userId)}/sentences/history`
+	const stored = (await store.get(key, { type: 'json' })) as ContentHistory | null
+	let italian = Array.isArray(stored?.italian) ? stored.italian : []
+	let english = Array.isArray(stored?.english) ? stored.english : []
+	if (!italian.length && !english.length) {
+		try {
+			const packStore = getStore({ name: 'generated-packs' })
+			const prefix = `users/${encodeURIComponent(userId)}/sentences/`
+			const { blobs } = await packStore.list({ prefix })
+			const packs = (await Promise.all(
+				blobs.map((blob) => packStore.get(blob.key, { type: 'json' }))
+			)) as Array<{ exercises?: GeneratedExercise[] } | null>
+			italian = mergeHistory(
+				italian,
+				packs.flatMap((pack) =>
+					(pack?.exercises ?? []).map((exercise) => exercise.targetItalian)
+				)
+			)
+			english = mergeHistory(
+				english,
+				packs.flatMap((pack) =>
+					(pack?.exercises ?? []).map((exercise) => exercise.promptEnglish)
+				)
+			)
+		} catch {
+			// A missing old library should not prevent a fresh pack being generated.
+		}
+	}
+	return {
+		store,
+		key,
+		history: {
+			italian,
+			english,
+		} satisfies ContentHistory,
+	}
+}
+
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
 	const auth = await requireUser()
@@ -1207,24 +720,54 @@ export default async (req: Request) => {
 	const body = await readJson<Body>(req)
 	if (!body) return json({ error: 'Missing generation request' }, { status: 400 })
 	const count = clampCount(body.targetCount)
+	const { store: historyStore, key: historyKey, history } =
+		await loadContentHistory(auth.user.id)
+	const generationBody: Body = {
+		...body,
+		avoidItalian: mergeHistory(history.italian, body.avoidItalian ?? []),
+		avoidEnglish: mergeHistory(history.english, body.avoidEnglish ?? []),
+	}
 	const packId = `${new Date().toISOString()}-${simpleHash(
 		JSON.stringify({
 			level: body.level,
 			programWeek: body.programWeek,
 			action: body.action,
 			sceneId: body.sceneId,
+			focus: body.sessionFocus,
+			domain: body.sessionDomain,
 		})
 	)}`
 
-	const ai = await generateWithOpenAI(body, count)
-	const exercises = sanitizeExercises(ai ?? fallbackPack(body, count), count, body)
-	const provider = ai ? 'openai' : 'fallback'
+	const ai = await generateWithOpenAI(generationBody, count)
+	const independentlyValidated = ai
+		? await validateWithOpenAI(generationBody, ai)
+		: null
+	const reviewedAI = independentlyValidated ?? []
+	let exercises = sanitizeExercises(reviewedAI, count, generationBody)
+	let provider: 'openai' | 'fallback' = 'openai'
+	if (!exercises.length) {
+		exercises = sanitizeExercises(
+			fallbackPack(generationBody, count * 2),
+			count,
+			generationBody
+		)
+		provider = 'fallback'
+	}
+
+	await historyStore.setJSON(historyKey, {
+		italian: mergeHistory(history.italian, exercises.map((item) => item.targetItalian)),
+		english: mergeHistory(history.english, exercises.map((item) => item.promptEnglish)),
+		updatedAt: new Date().toISOString(),
+	})
 
 	const payload = {
 		packId,
 		provider,
 		level: normaliseLevel(body.level),
 		programWeek: body.programWeek ?? null,
+		sessionFocus: body.sessionFocus ?? 'adaptive',
+		sessionDomain: body.sessionDomain ?? 'mixed',
+		challengeMode: body.challengeMode ?? 'stretch',
 		sceneId: body.sceneId ?? null,
 		sceneTitle: body.sceneTitle ?? null,
 		action: body.action ?? null,

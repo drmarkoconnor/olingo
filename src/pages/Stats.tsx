@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
 	Activity,
+	CalendarDays,
+	Clock3,
 	Gauge,
 	Layers,
 	Lightbulb,
@@ -19,6 +21,7 @@ import {
 	roundFocusWeights,
 } from '@/learning/curriculum'
 import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
+import { masteryStageLabel } from '@/learning/skill-mastery'
 
 type Snapshot = Awaited<ReturnType<typeof getFluencySnapshot>>
 
@@ -35,6 +38,17 @@ export default function Stats() {
 		openMistakes: 0,
 		repaired: 0,
 		spokenFirst: 0,
+		spokenAttempts: 0,
+		practiceDays: 0,
+		totalActiveMs: 0,
+		maxDailyActiveMs: 0,
+		maxDailyQuestions: 0,
+		medianResponseLatencyMs: 0,
+		unassistedRate: 0,
+		transferRate: 0,
+		masteredSkills: 0,
+		developingSkills: 0,
+		skillMastery: [],
 		conceptHints: 0,
 		wordBankHints: 0,
 		pronunciationAttempts: 0,
@@ -52,10 +66,10 @@ export default function Stats() {
 		loadSceneCards(userId, programWeek).then(setSceneCards)
 	}, [programWeek, userId])
 
-	const averageSeconds = snapshot.averageMs
-		? Math.round(snapshot.averageMs / 1000)
+	const averageSeconds = snapshot.medianResponseLatencyMs
+		? Math.round(snapshot.medianResponseLatencyMs / 1000)
 		: 0
-	const averageLabel = snapshot.averageMs
+	const averageLabel = snapshot.medianResponseLatencyMs
 		? averageSeconds > 0
 			? `${averageSeconds}s`
 			: '<1s'
@@ -64,6 +78,13 @@ export default function Stats() {
 		typeof snapshot.latestPronunciationScore === 'number'
 			? `${snapshot.latestPronunciationScore}/100`
 			: 'No score'
+	const formatTime = (ms: number) => {
+		const minutes = Math.round(ms / 60_000)
+		if (minutes < 1) return ms > 0 ? '<1m' : '0m'
+		const hours = Math.floor(minutes / 60)
+		const remainingMinutes = minutes % 60
+		return hours ? `${hours}h ${remainingMinutes}m` : `${minutes}m`
+	}
 
 	return (
 		<div className="page-stack">
@@ -74,11 +95,12 @@ export default function Stats() {
 
 			<section className="panel curriculum-summary">
 				<div>
-					<p className="eyebrow">Week {programWeek}</p>
+					<p className="eyebrow">24-week spiral - Week {programWeek}</p>
 					<h2>{stage.title}</h2>
 					<p>{stage.goals.join(' - ')}</p>
 				</div>
-				<div className="round-mix">
+				<div className="round-mix" aria-label="Planned practice mix">
+					<p className="round-mix-title">Planned practice mix</p>
 					{Object.entries(roundFocusWeights).map(([focus, weight]) => (
 						<span key={focus}>
 							<strong>{weight}%</strong>
@@ -89,6 +111,23 @@ export default function Stats() {
 			</section>
 
 			<div className="stat-grid">
+				<StatTile
+					icon={<CalendarDays size={22} />}
+					label="Practice days"
+					value={snapshot.practiceDays.toString()}
+				/>
+				<StatTile
+					icon={<Clock3 size={22} />}
+					label="Total active practice"
+					value={formatTime(snapshot.totalActiveMs)}
+				/>
+				<StatTile
+					icon={<Sparkles size={22} />}
+					label="Biggest day: answers / active"
+					value={`${snapshot.maxDailyQuestions} / ${formatTime(
+						snapshot.maxDailyActiveMs
+					)}`}
+				/>
 				<StatTile
 					icon={<Target size={22} />}
 					label="Production prompts"
@@ -101,7 +140,7 @@ export default function Stats() {
 				/>
 				<StatTile
 					icon={<Activity size={22} />}
-					label="Average response"
+					label="Typical spoken start"
 					value={averageLabel}
 				/>
 				<StatTile
@@ -111,8 +150,8 @@ export default function Stats() {
 				/>
 				<StatTile
 					icon={<Sparkles size={22} />}
-					label="Said aloud first"
-					value={snapshot.spokenFirst.toString()}
+					label="Voice answers"
+					value={snapshot.spokenAttempts.toString()}
 				/>
 				<StatTile
 					icon={<Lightbulb size={22} />}
@@ -126,8 +165,18 @@ export default function Stats() {
 				/>
 				<StatTile
 					icon={<Layers size={22} />}
-					label="Word-bank hints"
-					value={snapshot.wordBankHints.toString()}
+					label="Speaking skills ready"
+					value={snapshot.masteredSkills.toString()}
+				/>
+				<StatTile
+					icon={<Target size={22} />}
+					label="Unassisted success"
+					value={`${snapshot.unassistedRate}%`}
+				/>
+				<StatTile
+					icon={<Gauge size={22} />}
+					label="Situation transfer"
+					value={`${snapshot.transferRate}%`}
 				/>
 			</div>
 
@@ -210,20 +259,23 @@ export default function Stats() {
 			<section className="panel">
 				<div className="panel-title">
 					<Layers size={20} />
-					<h2>Phrase mastery</h2>
+					<h2>Speaking skill mastery</h2>
 				</div>
 				<div className="metric-list">
-					{snapshot.phraseFamilies.length ? (
-						snapshot.phraseFamilies.map((item) => (
-							<div className="metric-row" key={item.family}>
-								<span>{item.family}</span>
-								<strong>{item.rate}%</strong>
+					{snapshot.skillMastery.length ? (
+						snapshot.skillMastery.map((item) => (
+							<div className="metric-row" key={item.skillId}>
+								<span>
+									{item.label}
+									<small>{item.attempts} attempts across {item.contexts} situation(s)</small>
+								</span>
+								<strong>{masteryStageLabel(item.stage)}</strong>
 							</div>
 						))
 					) : (
 						<div className="metric-row muted-row">
-							<span>No phrase-family data yet</span>
-							<strong>0</strong>
+							<span>Complete a speaking staircase to begin tracking skills</span>
+							<strong>Not started</strong>
 						</div>
 					)}
 				</div>

@@ -31,6 +31,22 @@ import {
 	sentenceFitsLength,
 } from '@/learning/generated-sentences'
 import {
+	cueModeForStep,
+	deriveSkillId,
+	effectiveProgramWeek,
+	exerciseMatchesSessionIntent,
+	type ChallengeMode,
+	type ComplexityStep,
+	type CueMode,
+	type SessionDomain,
+	type SessionFocus,
+} from '@/learning/session-focus'
+import {
+	loadSkillStateMap,
+	recordSkillAttempt,
+	skillIsDue,
+} from '@/learning/skill-mastery'
+import {
 	evaluateAnswer,
 	outcomeIsCorrect,
 	type EvaluationResult,
@@ -45,7 +61,12 @@ import {
 	selectLevelBalanced,
 	type LevelBand,
 } from '@/learning/learning-profile'
-import { db, type ExerciseState, type MistakeItem } from '@/storage/db'
+import {
+	db,
+	type ExerciseState,
+	type MistakeItem,
+	type SkillState,
+} from '@/storage/db'
 import { addDays } from '@/utils/time'
 
 export type SprintItem = {
@@ -55,6 +76,9 @@ export type SprintItem = {
 	sourceMistakeId?: string
 	reviewKind?: 'new' | 'scheduled-review' | 'repair'
 	levelBand?: LevelBand
+	skillId?: string
+	complexityStep?: ComplexityStep
+	cueMode?: CueMode
 }
 
 function exerciseLevel(exercise: Exercise): CefrLevel {
@@ -113,6 +137,9 @@ export type SprintOptions = {
 	sceneTitle?: string
 	sceneAction?: string
 	programWeek?: number
+	sessionFocus?: SessionFocus
+	sessionDomain?: SessionDomain
+	challengeMode?: ChallengeMode
 	generateFresh?: boolean
 }
 
@@ -121,7 +148,13 @@ export async function loadDailySprint(
 	limit = 8,
 	options: SprintOptions = {}
 ) {
-	const programWeek = clampProgramWeek(options.programWeek ?? 1)
+	const sessionFocus = options.sessionFocus ?? 'adaptive'
+	const sessionDomain = options.sessionDomain ?? 'mixed'
+	const challengeMode = options.challengeMode ?? 'stretch'
+	const programWeek = effectiveProgramWeek(
+		clampProgramWeek(options.programWeek ?? 1),
+		sessionFocus
+	)
 	await ensureFrameSeedFallback(userId, {
 		targetLevel: options.targetLevel,
 		sentenceLength: options.sentenceLength,
@@ -129,6 +162,9 @@ export async function loadDailySprint(
 		sceneId: options.sceneId,
 		sceneTitle: options.sceneTitle,
 		action: options.sceneAction,
+		sessionFocus,
+		sessionDomain,
+		challengeMode,
 	})
 	if (options.generateFresh !== false) {
 		await ensureGeneratedSentencePool(userId, {
@@ -138,6 +174,9 @@ export async function loadDailySprint(
 			sceneId: options.sceneId,
 			sceneTitle: options.sceneTitle,
 			action: options.sceneAction,
+			sessionFocus,
+			sessionDomain,
+			challengeMode,
 			minFresh: Math.max(16, limit * 2),
 		})
 	}
@@ -148,6 +187,7 @@ export async function loadDailySprint(
 		allExercises.map((exercise) => [exercise.id, exercise])
 	)
 	const seenProductionIds = await loadSeenProductionExerciseIds(userId)
+	const skillStateMap = await loadSkillStateMap(userId)
 	const states = await db.exerciseStates
 		.where('userId')
 		.equals(userId)
@@ -162,6 +202,12 @@ export async function loadDailySprint(
 			.filter((exercise) => exercise.difficulty <= maxDifficulty)
 			.filter((exercise) => exerciseIsAvailableForWeek(exercise, programWeek))
 			.filter((exercise) => sentenceFitsLength(exercise, options.sentenceLength))
+			.filter((exercise) =>
+				exerciseMatchesSessionIntent(exercise, {
+					focus: sessionFocus,
+					domain: sessionDomain,
+				})
+			)
 			.map((exercise) => exercise.id)
 	)
 
@@ -281,7 +327,9 @@ export async function loadDailySprint(
 		}
 	}
 
-	const ordered = orderSprintItems([...orderedDue, ...topUpItems], programWeek)
+	const ordered = orderSprintItems([...orderedDue, ...topUpItems], programWeek).sort(
+		(a, b) => skillPriority(a, skillStateMap) - skillPriority(b, skillStateMap)
+	)
 	const repairItemsForQueue = ordered.filter((item) => item.sourceMistakeId)
 	const balanced = selectLevelBalanced(
 		ordered.filter((item) => !item.sourceMistakeId),
@@ -297,7 +345,12 @@ export async function loadDailySprint(
 				? ('consolidation' as const)
 				: ('stretch' as const),
 	}))
-	return [...repairItemsForQueue, ...balanced].slice(0, limit)
+	const selected = [...repairItemsForQueue, ...balanced].slice(0, limit)
+	return applyComplexityLadder(
+		orderPatternedVariety(selected, skillStateMap),
+		challengeMode,
+		skillStateMap
+	)
 }
 
 async function loadMistakeRepairItems(
@@ -357,14 +410,99 @@ function orderSprintItems(items: SprintItem[], week = 1) {
 	return unique.sort((a, b) => sortByCurriculumPriority(a, b, week))
 }
 
+function skillPriority(item: SprintItem, states: Map<string, SkillState>) {
+	const state = states.get(deriveSkillId(item.exercise))
+	if (!state) return 0
+	const dueScore = skillIsDue(state) ? 0 : 100_000
+	return dueScore + state.masteryStage * 10_000 + Math.min(9_999, state.attempts)
+}
+
+function orderPatternedVariety(
+	items: SprintItem[],
+	states: Map<string, SkillState>
+) {
+	const repairs = items.filter((item) => item.sourceMistakeId)
+	const groups = new Map<string, SprintItem[]>()
+	for (const item of items.filter((current) => !current.sourceMistakeId)) {
+		const skillId = deriveSkillId(item.exercise)
+		const group = groups.get(skillId) ?? []
+		group.push(item)
+		groups.set(skillId, group)
+	}
+	const orderedGroups = Array.from(groups.entries())
+		.map(([skillId, group]) => ({ skillId, group }))
+		.sort(
+			(a, b) =>
+				skillPriority(a.group[0], states) - skillPriority(b.group[0], states)
+		)
+	const focusGroups = orderedGroups.slice(0, Math.min(4, orderedGroups.length))
+	const remainingGroups = orderedGroups.slice(focusGroups.length)
+	const ordered: SprintItem[] = [...repairs]
+
+	// Begin with two variations of the strongest focus frames, then interleave.
+	for (const entry of focusGroups) {
+		ordered.push(...entry.group.splice(0, 2))
+	}
+	const interleaved = [...focusGroups, ...remainingGroups]
+	let added = true
+	while (added) {
+		added = false
+		for (const entry of interleaved) {
+			const item = entry.group.shift()
+			if (!item) continue
+			ordered.push(item)
+			added = true
+		}
+	}
+	return ordered
+}
+
+function applyComplexityLadder(
+	items: SprintItem[],
+	challengeMode: ChallengeMode,
+	states: Map<string, SkillState>
+) {
+	const skillIndexes = new Map<string, number>()
+	return items.map((item) => {
+		const skillId = deriveSkillId(item.exercise)
+		const state = states.get(skillId)
+		const variationIndex = skillIndexes.get(skillId) ?? 0
+		skillIndexes.set(skillId, variationIndex + 1)
+		const startingStep = state
+			? Math.min(5, Math.max(1, state.masteryStage + 1))
+			: 1
+		const stepGain =
+			challengeMode === 'comfortable'
+				? Math.floor(variationIndex / 2)
+				: challengeMode === 'intensive'
+				? variationIndex + 1
+				: variationIndex
+		const complexityStep = item.sourceMistakeId
+			? (3 as const)
+			: (Math.min(5, startingStep + stepGain) as ComplexityStep)
+		return {
+			...item,
+			skillId,
+			complexityStep,
+			cueMode: cueModeForStep(complexityStep),
+		}
+	})
+}
+
 export async function submitExerciseAnswer(args: {
 	userId: string
 	item: SprintItem
 	answer: string
+	targetLevel?: CefrLevel
+	sessionFocus?: SessionFocus
+	sessionDomain?: SessionDomain
 	hintsUsed: number
 	conceptHintsUsed?: number
 	wordBankUsed?: boolean
 	spokenFirst?: boolean
+	spoken?: boolean
+	responseLatencyMs?: number
+	utteranceDurationMs?: number
 	mode?: string
 	msUsed: number
 }) {
@@ -377,6 +515,9 @@ export async function submitExerciseAnswer(args: {
 			spokenFirst: args.spokenFirst,
 			phase: args.item.focusPhase ?? getExercisePhase(args.item.exercise),
 			action: getExerciseAction(args.item.exercise),
+			level: args.targetLevel ?? args.item.exercise.cefrLevel,
+			focus: args.sessionFocus,
+			cueMode: args.item.cueMode,
 		}
 	)
 	const updated = scheduleExerciseReview(args.item.state, result.outcome)
@@ -400,7 +541,33 @@ export async function submitExerciseAnswer(args: {
 		phase: args.item.focusPhase ?? getExercisePhase(args.item.exercise),
 		action: getExerciseAction(args.item.exercise),
 		mode: args.mode ?? 'sentence',
+		skillId: args.item.skillId ?? deriveSkillId(args.item.exercise),
+		complexityStep: args.item.complexityStep,
+		cueMode: args.item.cueMode,
+		responseLatencyMs: args.responseLatencyMs ?? args.msUsed,
+		utteranceDurationMs: args.utteranceDurationMs ?? 0,
+		spoken: args.spoken ? 1 : 0,
 		answer: args.answer,
+	})
+
+	await recordSkillAttempt({
+		userId: args.userId,
+		exercise: args.item.exercise,
+		targetLevel:
+			args.targetLevel ??
+			args.item.exercise.cefrLevel ??
+			levelForDifficulty(args.item.exercise.difficulty),
+		focus: args.sessionFocus ?? 'adaptive',
+		domain: args.sessionDomain ?? 'mixed',
+		complexityStep: args.item.complexityStep ?? 3,
+		cueMode: args.item.cueMode ?? 'english',
+		communicative: result.communicative,
+		accepted: result.accepted,
+		hintsUsed: args.hintsUsed,
+		wordBankUsed: Boolean(args.wordBankUsed),
+		spoken: Boolean(args.spoken),
+		responseLatencyMs: args.responseLatencyMs ?? args.msUsed,
+		utteranceDurationMs: args.utteranceDurationMs,
 	})
 
 	if (result.spellingIssues.length > 0) {
@@ -419,7 +586,14 @@ async function evaluateExerciseAnswer(
 	answer: string,
 	hintsUsed: number,
 	msUsed: number,
-	context?: { spokenFirst?: boolean; phase?: string; action?: string }
+	context?: {
+		spokenFirst?: boolean
+		phase?: string
+		action?: string
+		level?: CefrLevel
+		focus?: SessionFocus
+		cueMode?: CueMode
+	}
 ) {
 	const fallback = evaluateAnswer(exercise, answer, hintsUsed, msUsed)
 	if (typeof window === 'undefined') return fallback
@@ -603,13 +777,25 @@ export async function submitMistakeRepair(args: {
 }
 
 export async function getFluencySnapshot(userId: string) {
-	const logs = await db.exerciseLogs.where('userId').equals(userId).toArray()
-	const mistakes = await db.mistakes.where('userId').equals(userId).toArray()
-	const misspellings = await db.misspellings.where('userId').equals(userId).toArray()
-	const pronunciationAttempts = await db.pronunciationAttempts
-		.where('userId')
-		.equals(userId)
-		.toArray()
+	const [
+		logs,
+		mistakes,
+		misspellings,
+		pronunciationAttempts,
+		generatedExercises,
+		skillStates,
+		skillAttempts,
+		dailySessions,
+	] = await Promise.all([
+		db.exerciseLogs.where('userId').equals(userId).toArray(),
+		db.mistakes.where('userId').equals(userId).toArray(),
+		db.misspellings.where('userId').equals(userId).toArray(),
+		db.pronunciationAttempts.where('userId').equals(userId).toArray(),
+		db.generatedExercises.where('userId').equals(userId).toArray(),
+		db.skillStates.where('userId').equals(userId).toArray(),
+		db.skillAttempts.where('userId').equals(userId).toArray(),
+		db.dailySessions.where('userId').equals(userId).toArray(),
+	])
 	const total = logs.length
 	const correct = logs.filter((log) => log.correct).length
 	const averageMs = total
@@ -618,6 +804,20 @@ export async function getFluencySnapshot(userId: string) {
 	const repaired = mistakes.filter((mistake) => mistake.status === 'repaired').length
 	const spokenFirst = logs.filter((log) => log.spokenFirst).length
 	const communicative = logs.filter((log) => log.communicative ?? log.correct).length
+	const spokenLogs = logs.filter((log) => log.spoken)
+	const responseLatencies = spokenLogs
+		.map((log) => log.responseLatencyMs ?? 0)
+		.filter((value) => value > 0)
+		.sort((a, b) => a - b)
+	const medianResponseLatencyMs = responseLatencies.length
+		? responseLatencies[Math.floor(responseLatencies.length / 2)]
+		: 0
+	const unassistedSuccesses = skillAttempts.filter(
+		(attempt) => attempt.unassisted && attempt.targetAccurate
+	).length
+	const transferAttempts = skillAttempts.filter(
+		(attempt) => attempt.complexityStep >= 4
+	)
 	const sortedPronunciation = pronunciationAttempts.sort(
 		(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
 	)
@@ -630,6 +830,9 @@ export async function getFluencySnapshot(userId: string) {
 		: 0
 	const categoryErrors = new Map<string, number>()
 	const phraseFamilies = new Map<string, { total: number; communicative: number }>()
+	const generatedMap = new Map(
+		generatedExercises.map((exercise) => [exercise.id, exercise])
+	)
 	const phaseCounts = new Map<string, number>()
 	for (const mistake of mistakes) {
 		for (const tag of mistake.tags) {
@@ -637,7 +840,7 @@ export async function getFluencySnapshot(userId: string) {
 		}
 	}
 	for (const log of logs) {
-		const exercise = getExercise(log.exerciseId)
+		const exercise = getExercise(log.exerciseId) ?? generatedMap.get(log.exerciseId)
 		if (exercise) {
 			const current = phraseFamilies.get(exercise.phraseFamily) ?? {
 				total: 0,
@@ -650,6 +853,25 @@ export async function getFluencySnapshot(userId: string) {
 		if (log.phase) phaseCounts.set(log.phase, (phaseCounts.get(log.phase) ?? 0) + 1)
 	}
 
+	const unassistedAttempts = skillAttempts.filter(
+		(attempt) => attempt.unassisted
+	).length
+	const practicedSessions = dailySessions.filter(
+		(session) => session.completedCount > 0
+	)
+	const totalActiveMs = practicedSessions.reduce(
+		(total, session) => total + session.activeMs,
+		0
+	)
+	const maxDailyActiveMs = practicedSessions.reduce(
+		(maximum, session) => Math.max(maximum, session.activeMs),
+		0
+	)
+	const maxDailyQuestions = practicedSessions.reduce(
+		(maximum, session) => Math.max(maximum, session.completedCount),
+		0
+	)
+
 	return {
 		total,
 		correct,
@@ -659,6 +881,45 @@ export async function getFluencySnapshot(userId: string) {
 		openMistakes: mistakes.filter((mistake) => mistake.status !== 'repaired').length,
 		repaired,
 		spokenFirst,
+		spokenAttempts: spokenLogs.length,
+		practiceDays: practicedSessions.length,
+		totalActiveMs,
+		maxDailyActiveMs,
+		maxDailyQuestions,
+		medianResponseLatencyMs,
+		unassistedRate: unassistedAttempts
+			? Math.round((unassistedSuccesses / unassistedAttempts) * 100)
+			: 0,
+		transferRate: transferAttempts.length
+			? Math.round(
+					(transferAttempts.filter((attempt) => attempt.communicative).length /
+						transferAttempts.length) *
+						100
+			  )
+			: 0,
+		masteredSkills: skillStates.filter((skill) => skill.masteryStage >= 4).length,
+		developingSkills: skillStates.filter(
+			(skill) => skill.masteryStage > 0 && skill.masteryStage < 4
+		).length,
+		skillMastery: skillStates
+			.filter((skill) => skill.attempts > 0)
+			.sort(
+				(a, b) =>
+					b.masteryStage - a.masteryStage ||
+					b.attempts - a.attempts ||
+					a.label.localeCompare(b.label)
+			)
+			.slice(0, 10)
+			.map((skill) => ({
+				skillId: skill.skillId,
+				label: skill.label,
+				stage: skill.masteryStage,
+				attempts: skill.attempts,
+				contexts: skill.contexts.length,
+				averageResponseLatencyMs: skill.spokenAttempts
+					? Math.round(skill.totalResponseLatencyMs / skill.spokenAttempts)
+					: 0,
+			})),
 		conceptHints: logs.reduce(
 			(sum, log) => sum + (log.conceptHintsUsed ?? log.hintsUsed ?? 0),
 			0

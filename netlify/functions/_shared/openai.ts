@@ -52,7 +52,7 @@ export async function evaluateWithOpenAI(payload: unknown) {
 				{
 					role: 'system',
 					content:
-						'You evaluate A1-C1 Italian learner answers. Reward communicative courage first at the requested level, then give one concise correction. Return only schema-valid JSON.',
+						'You evaluate a short spoken-style Italian learner response at the requested CEFR level and session focus. Judge whether an Italian listener would understand the intended meaning before judging polish. Accept natural alternatives that preserve the prompt meaning; do not demand the model wording. If communicative but imperfect, say so kindly and correct only the highest-value issue. Check person, number, tense, modality, and time relationships carefully. Keep feedback brief enough for live conversation practice. Return only schema-valid JSON.',
 				},
 				{
 					role: 'user',

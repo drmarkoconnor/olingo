@@ -26,11 +26,18 @@ type PartOfSpeech =
 type Body = {
 	level?: CefrLevel
 	programWeek?: number
+	sessionFocus?: string
 	stage?: unknown
 	domains?: VocabDomain[]
 	targetCount?: number
 	avoidItalian?: string[]
 	avoidEnglish?: string[]
+}
+
+type ContentHistory = {
+	italian: string[]
+	english: string[]
+	updatedAt?: string
 }
 
 type GeneratedVocabulary = {
@@ -144,9 +151,11 @@ function sanitize(
 	level: CefrLevel,
 	requestedDomains: VocabDomain[],
 	avoidItalian: string[],
+	avoidEnglish: string[],
 	count: number
 ) {
-	const seen = [...avoidItalian]
+	const seenItalian = [...avoidItalian]
+	const seenEnglish = [...avoidEnglish]
 	return items
 		.filter(
 			(item) =>
@@ -158,10 +167,18 @@ function sanitize(
 		.filter((item) => {
 			const words = normaliseText(item.italian).split(' ').filter(Boolean).length
 			if (words > 7 || item.utilityScore < 75) return false
-			if (seen.some((existing) => tokenSimilarity(existing, item.italian) >= 0.9)) {
+			if (
+				seenItalian.some(
+					(existing) => tokenSimilarity(existing, item.italian) >= 0.9
+				) ||
+				seenEnglish.some(
+					(existing) => tokenSimilarity(existing, item.english) >= 0.9
+				)
+			) {
 				return false
 			}
-			seen.push(item.italian)
+			seenItalian.push(item.italian)
+			seenEnglish.push(item.english)
 			return true
 		})
 		.map((item) => ({
@@ -202,6 +219,7 @@ async function generate(
 						levelGuidance: levelGuidance[level],
 						programWeek: body.programWeek,
 						stage: body.stage,
+						sessionFocus: body.sessionFocus ?? 'adaptive',
 						domains: requestedDomains,
 						avoidItalian: (body.avoidItalian ?? []).slice(-240),
 						avoidEnglish: (body.avoidEnglish ?? []).slice(-240),
@@ -239,6 +257,18 @@ async function generate(
 	}
 }
 
+function mergeHistory(current: string[], additions: string[]) {
+	const seen = new Set<string>()
+	const merged: string[] = []
+	for (const value of [...current, ...additions]) {
+		const key = normaliseText(value)
+		if (!key || seen.has(key)) continue
+		seen.add(key)
+		merged.push(value)
+	}
+	return merged
+}
+
 export default async (req: Request) => {
 	if (req.method !== 'POST') return methodNotAllowed()
 	const auth = await requireUser()
@@ -247,17 +277,56 @@ export default async (req: Request) => {
 	if (!body) return json({ error: 'Missing vocabulary request' }, { status: 400 })
 
 	const level = normaliseLevel(body.level)
+	const historyStore = getStore({ name: 'content-history', consistency: 'strong' })
+	const historyKey = `users/${encodeURIComponent(auth.user.id)}/vocabulary/history`
+	const storedHistory = (await historyStore.get(historyKey, {
+		type: 'json',
+	})) as ContentHistory | null
+	const history: ContentHistory = {
+		italian: Array.isArray(storedHistory?.italian) ? storedHistory.italian : [],
+		english: Array.isArray(storedHistory?.english) ? storedHistory.english : [],
+	}
+	if (!history.italian.length && !history.english.length) {
+		try {
+			const packStore = getStore({ name: 'generated-packs' })
+			const prefix = `users/${encodeURIComponent(auth.user.id)}/vocabulary/`
+			const { blobs } = await packStore.list({ prefix })
+			const packs = (await Promise.all(
+				blobs.map((blob) => packStore.get(blob.key, { type: 'json' }))
+			)) as Array<{ items?: GeneratedVocabulary[] } | null>
+			history.italian = mergeHistory(
+				history.italian,
+				packs.flatMap((pack) =>
+					(pack?.items ?? []).map((item) => item.italian)
+				)
+			)
+			history.english = mergeHistory(
+				history.english,
+				packs.flatMap((pack) =>
+					(pack?.items ?? []).map((item) => item.english)
+				)
+			)
+		} catch {
+			// Continue with an empty history if the older pack library is unavailable.
+		}
+	}
+	const generationBody: Body = {
+		...body,
+		avoidItalian: mergeHistory(history.italian, body.avoidItalian ?? []),
+		avoidEnglish: mergeHistory(history.english, body.avoidEnglish ?? []),
+	}
 	const requestedDomains = Array.from(
 		new Set((body.domains ?? []).filter((domain) => domains.includes(domain)))
 	).slice(0, 5)
 	if (!requestedDomains.length) requestedDomains.push('food', 'family', 'cafe')
 	const count = clampCount(body.targetCount)
-	const generated = await generate(body, level, requestedDomains, count)
+	const generated = await generate(generationBody, level, requestedDomains, count)
 	const items = sanitize(
 		generated ?? [],
 		level,
 		requestedDomains,
-		body.avoidItalian ?? [],
+		generationBody.avoidItalian ?? [],
+		generationBody.avoidEnglish ?? [],
 		count
 	)
 	const provider = items.length ? 'openai' : 'fallback'
@@ -271,6 +340,11 @@ export default async (req: Request) => {
 		items,
 		createdAt: new Date().toISOString(),
 	}
+	await historyStore.setJSON(historyKey, {
+		italian: mergeHistory(history.italian, items.map((item) => item.italian)),
+		english: mergeHistory(history.english, items.map((item) => item.english)),
+		updatedAt: new Date().toISOString(),
+	})
 
 	const store = getStore({ name: 'generated-packs', consistency: 'strong' })
 	await store.setJSON(

@@ -2,6 +2,7 @@ import { sceneVocabulary, type CefrLevel, type SceneVocabulary } from '@/learnin
 import type { VocabDomain } from '@/learning/conversation-frames'
 import { getCurriculumStage } from '@/learning/curriculum'
 import { selectLevelBalanced } from '@/learning/learning-profile'
+import type { SessionDomain, SessionFocus } from '@/learning/session-focus'
 import { apiFetch } from '@/lib/api'
 import { db, type UserCard, type Word } from '@/storage/db'
 import { scheduleReview } from '@/srs/scheduler'
@@ -30,6 +31,8 @@ type VocabularySeed = [
 export type VocabularyOptions = {
 	programWeek?: number
 	targetLevel?: CefrLevel
+	sessionDomain?: SessionDomain
+	sessionFocus?: SessionFocus
 	limit?: number
 	dateKey?: string
 }
@@ -395,12 +398,24 @@ export function getVocabularyDomainsForScene(sceneId: string, programWeek = 1) {
 	return Array.from(domains)
 }
 
+function getVocabularyDomains(
+	sceneId: string,
+	options: Pick<VocabularyOptions, 'programWeek' | 'sessionDomain'>
+) {
+	return options.sessionDomain && options.sessionDomain !== 'mixed'
+		? [options.sessionDomain]
+		: getVocabularyDomainsForScene(sceneId, options.programWeek)
+}
+
 export function getThematicVocabularyForScene(
 	sceneId: string,
-	options: Pick<VocabularyOptions, 'programWeek' | 'targetLevel'> = {}
+	options: Pick<
+		VocabularyOptions,
+		'programWeek' | 'targetLevel' | 'sessionDomain'
+	> = {}
 ) {
 	const targetLevel = options.targetLevel ?? 'B1'
-	const domains = getVocabularyDomainsForScene(sceneId, options.programWeek)
+	const domains = getVocabularyDomains(sceneId, options)
 	const maxRank = levelRank[targetLevel]
 	const sceneItems: VocabularyReviewCard[] = sceneVocabulary
 		.filter((item) => item.sceneId === sceneId)
@@ -497,7 +512,7 @@ export async function loadVocabularyReviewQueue(
 	const limit = Math.max(8, Math.min(40, Math.round(options.limit ?? 18)))
 	const dateKey = options.dateKey ?? new Date().toISOString().slice(0, 10)
 	const seedPool = getThematicVocabularyForScene(sceneId, options)
-	const domains = new Set(getVocabularyDomainsForScene(sceneId, options.programWeek))
+	const domains = new Set(getVocabularyDomains(sceneId, options))
 	const targetLevel = options.targetLevel ?? 'B1'
 	const generated = (await db.words.toArray())
 		.filter(
@@ -623,7 +638,7 @@ export async function ensureGeneratedVocabularyPool(
 	options: VocabularyOptions & { minFresh?: number }
 ) {
 	const targetLevel = options.targetLevel ?? 'B1'
-	const domains = getVocabularyDomainsForScene(sceneId, options.programWeek)
+	const domains = getVocabularyDomains(sceneId, options)
 	const minFresh = Math.max(12, options.minFresh ?? 24)
 	const refillAt = Math.max(8, Math.ceil(minFresh / 2))
 	let generated = (await db.words.toArray()).filter(
@@ -661,6 +676,7 @@ export async function ensureGeneratedVocabularyPool(
 				programWeek: options.programWeek ?? 1,
 				stage: getCurriculumStage(options.programWeek ?? 1),
 				domains,
+				sessionFocus: options.sessionFocus ?? 'adaptive',
 				targetCount: Math.min(36, Math.max(24, minFresh - fresh.length)),
 				avoidItalian: allWords.map((word) => word.italian).slice(-240),
 				avoidEnglish: allWords.map((word) => word.english).slice(-240),

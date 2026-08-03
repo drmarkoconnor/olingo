@@ -1,4 +1,10 @@
 import { db, type DailySession, type DailySessionItem, type MistakeItem } from '@/storage/db'
+import type { CefrLevel } from '@/learning/content'
+import type {
+	ChallengeMode,
+	SessionDomain,
+	SessionFocus,
+} from '@/learning/session-focus'
 
 export const sessionActivityLabels = {
 	match: 'Match useful chunks',
@@ -20,6 +26,10 @@ export type DailySessionOptions = {
 	vocabularyCount: number
 	sentenceCount: number
 	repairCount: number
+	targetLevel?: CefrLevel
+	sessionFocus?: SessionFocus
+	sessionDomain?: SessionDomain
+	challengeMode?: ChallengeMode
 }
 
 export type UnitResult = {
@@ -63,9 +73,40 @@ function clampTarget(value: number, fallback: number, max: number) {
 }
 
 export function buildDailyActivityDefinitions(options: DailySessionOptions) {
-	const matchTarget = clampTarget(Math.min(options.vocabularyCount, 4), 4, 4)
-	const recallTarget = clampTarget(Math.min(options.vocabularyCount, 3), 3, 3)
-	const sentenceTarget = clampTarget(Math.min(options.sentenceCount, 10), 8, 10)
+	const goalScale = Math.max(0.5, Math.min(2, (options.dailyGoal || 30) / 30))
+	const focus = options.sessionFocus ?? 'adaptive'
+	const challengeMultiplier =
+		options.challengeMode === 'intensive'
+			? 1.2
+			: options.challengeMode === 'comfortable'
+			? 0.9
+			: 1
+	const desiredMatch = Math.round(
+		(focus === 'vocabulary' ? 4 : focus === 'fluency' ? 2 : 3) * goalScale
+	)
+	const desiredRecall = Math.round(
+		(focus === 'vocabulary' ? 5 : focus === 'fluency' ? 2 : 3) * goalScale
+	)
+	const desiredSentences = Math.round(
+		(focus === 'vocabulary' ? 10 : focus === 'fluency' ? 14 : 12) *
+			goalScale *
+			challengeMultiplier
+	)
+	const matchTarget = clampTarget(
+		Math.min(options.vocabularyCount, desiredMatch),
+		Math.min(3, Math.max(1, options.vocabularyCount)),
+		6
+	)
+	const recallTarget = clampTarget(
+		Math.min(Math.max(0, options.vocabularyCount - matchTarget), desiredRecall),
+		Math.min(3, Math.max(1, options.vocabularyCount)),
+		7
+	)
+	const sentenceTarget = clampTarget(
+		desiredSentences,
+		8,
+		20
+	)
 	const repairTarget = Math.max(0, Math.min(3, Math.round(options.repairCount)))
 
 	return [
@@ -172,6 +213,12 @@ async function reconcileSessionDefinitions(
 	const allComplete = mergedItems.every((item) => item.status === 'complete')
 	const updatedSession: DailySession = {
 		...session,
+		programWeek: options.programWeek,
+		dailyGoal: options.dailyGoal,
+		targetLevel: options.targetLevel,
+		sessionFocus: options.sessionFocus,
+		sessionDomain: options.sessionDomain,
+		challengeMode: options.challengeMode,
 		plannedCount: mergedItems.reduce((total, item) => total + item.targetCount, 0),
 		completedCount: totalCompleted,
 		status: allComplete ? 'complete' : 'active',
@@ -213,6 +260,10 @@ export async function getOrCreateDailySession(
 		dateKey,
 		programWeek: options.programWeek,
 		dailyGoal: options.dailyGoal,
+		targetLevel: options.targetLevel,
+		sessionFocus: options.sessionFocus,
+		sessionDomain: options.sessionDomain,
+		challengeMode: options.challengeMode,
 		status: 'active',
 		plannedCount,
 		completedCount: 0,

@@ -1,5 +1,14 @@
 import { create } from 'zustand'
 import { cefrLevels, scenes, type CefrLevel } from '@/learning/content'
+import {
+	focusAvailableAtLevel,
+	normaliseChallengeMode,
+	normaliseSessionDomain,
+	normaliseSessionFocus,
+	type ChallengeMode,
+	type SessionDomain,
+	type SessionFocus,
+} from '@/learning/session-focus'
 
 type SettingsState = {
 	dailyGoal: number
@@ -8,6 +17,9 @@ type SettingsState = {
 	targetLevel: CefrLevel
 	sentenceLength: 'short' | 'medium' | 'long'
 	programWeek: number
+	sessionFocus: SessionFocus
+	sessionDomain: SessionDomain
+	challengeMode: ChallengeMode
 	selectedSceneId: string
 	selectedSceneAction: string
 	setDailyGoal: (n: number) => void
@@ -16,6 +28,9 @@ type SettingsState = {
 	setTargetLevel: (v: SettingsState['targetLevel']) => void
 	setSentenceLength: (v: SettingsState['sentenceLength']) => void
 	setProgramWeek: (n: number) => void
+	setSessionFocus: (v: SessionFocus) => void
+	setSessionDomain: (v: SessionDomain) => void
+	setChallengeMode: (v: ChallengeMode) => void
 	setSelectedScene: (sceneId: string, action?: string) => void
 }
 
@@ -29,6 +44,9 @@ type PersistedSettings = Pick<
 	| 'targetLevel'
 	| 'sentenceLength'
 	| 'programWeek'
+	| 'sessionFocus'
+	| 'sessionDomain'
+	| 'challengeMode'
 	| 'selectedSceneId'
 	| 'selectedSceneAction'
 >
@@ -40,6 +58,9 @@ const defaultSettings: PersistedSettings = {
 	targetLevel: 'B1',
 	sentenceLength: 'medium',
 	programWeek: 1,
+	sessionFocus: 'adaptive',
+	sessionDomain: 'mixed',
+	challengeMode: 'stretch',
 	selectedSceneId: 'milan-cafe',
 	selectedSceneAction: 'Ask opinion',
 }
@@ -76,6 +97,9 @@ function load(): PersistedSettings {
 				...parsed,
 				targetLevel: normaliseTargetLevel(parsed.targetLevel),
 				programWeek: clampProgramWeek(parsed.programWeek ?? 1),
+				sessionFocus: normaliseSessionFocus(parsed.sessionFocus),
+				sessionDomain: normaliseSessionDomain(parsed.sessionDomain),
+				challengeMode: normaliseChallengeMode(parsed.challengeMode),
 				selectedSceneId,
 				selectedSceneAction: normaliseSceneAction(
 					selectedSceneId,
@@ -96,6 +120,9 @@ function save(s: SettingsState) {
 		targetLevel,
 		sentenceLength,
 		programWeek,
+		sessionFocus,
+		sessionDomain,
+		challengeMode,
 		selectedSceneId,
 		selectedSceneAction,
 	} = s
@@ -108,6 +135,9 @@ function save(s: SettingsState) {
 			targetLevel,
 			sentenceLength,
 			programWeek,
+			sessionFocus,
+			sessionDomain,
+			challengeMode,
 			selectedSceneId,
 			selectedSceneAction,
 		})
@@ -129,7 +159,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
 		save(get())
 	},
 	setTargetLevel: (targetLevel) => {
-		set({ targetLevel })
+		set({
+			targetLevel,
+			sessionFocus: focusAvailableAtLevel(get().sessionFocus, targetLevel)
+				? get().sessionFocus
+				: 'adaptive',
+		})
 		save(get())
 	},
 	setSentenceLength: (sentenceLength) => {
@@ -138,6 +173,22 @@ export const useSettings = create<SettingsState>((set, get) => ({
 	},
 	setProgramWeek: (programWeek) => {
 		set({ programWeek: clampProgramWeek(programWeek) })
+		save(get())
+	},
+	setSessionFocus: (sessionFocus) => {
+		set({
+			sessionFocus: focusAvailableAtLevel(sessionFocus, get().targetLevel)
+				? sessionFocus
+				: 'adaptive',
+		})
+		save(get())
+	},
+	setSessionDomain: (sessionDomain) => {
+		set({ sessionDomain })
+		save(get())
+	},
+	setChallengeMode: (challengeMode) => {
+		set({ challengeMode })
 		save(get())
 	},
 	setSelectedScene: (sceneId, action) => {

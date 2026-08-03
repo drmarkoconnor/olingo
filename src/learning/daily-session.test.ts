@@ -56,12 +56,12 @@ describe('daily session planning', () => {
 			'transfer',
 		])
 		expect(first.items.find((item) => item.type === 'sentence')?.targetCount).toBe(
-			10
+			12
 		)
-		expect(first.items.find((item) => item.type === 'match')?.targetCount).toBe(4)
+		expect(first.items.find((item) => item.type === 'match')?.targetCount).toBe(3)
 		expect(first.items.find((item) => item.type === 'recall')?.targetCount).toBe(3)
 		expect(getDailySessionProgress(first.items)).toEqual({
-			planned: 21,
+			planned: 22,
 			completed: 0,
 			totalCompleted: 0,
 			bonus: 0,
@@ -165,7 +165,9 @@ describe('daily session planning', () => {
 		expect(afterBonus.session.completedCount).toBe(
 			afterBonus.session.plannedCount + 1
 		)
-		expect(afterBonus.session.activeMs).toBe(3700)
+		expect(afterBonus.session.activeMs).toBe(
+			afterBonus.session.plannedCount * 500 + 1200
+		)
 		expect(bonusSentence.completedCount).toBe(bonusSentence.targetCount + 1)
 		expect(progress).toMatchObject({
 			completed: afterBonus.session.plannedCount,

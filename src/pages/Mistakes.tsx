@@ -119,7 +119,7 @@ export default function Mistakes() {
 											type="button"
 											onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
 											<Volume2 size={18} />
-											AI model
+										Hear Italian
 										</button>
 									)}
 									<button

@@ -22,6 +22,9 @@ import {
 	Volume2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import SentenceVoiceRecorder, {
+	type VoiceRecording,
+} from '@/components/SentenceVoiceRecorder'
 import {
 	getExerciseAction,
 	getExercisePhase,
@@ -29,9 +32,10 @@ import {
 	cefrLevels,
 	scenes,
 	sprintPhaseLabels,
+	type CefrLevel,
 	type SceneVocabulary,
 } from '@/learning/content'
-import { getCurriculumStage, getSessionPlan } from '@/learning/curriculum'
+import { getSessionPlan } from '@/learning/curriculum'
 import { loadSceneCards, type SceneCard } from '@/learning/scene-episodes'
 import {
 	completeDailySessionUnit,
@@ -67,6 +71,17 @@ import type { EvaluationResult } from '@/learning/evaluator'
 import { ensureGeneratedSentencePool } from '@/learning/generated-sentences'
 import { getLearningProfile } from '@/learning/learning-profile'
 import {
+	challengeModes,
+	effectiveProgramWeek,
+	focusAvailableAtLevel,
+	focusDefinition,
+	sessionDomains,
+	sessionFocusDefinitions,
+	type ChallengeMode,
+	type SessionDomain,
+	type SessionFocus,
+} from '@/learning/session-focus'
+import {
 	ensureGeneratedVocabularyPool,
 	loadVocabularyReviewQueue,
 	recordVocabularyReview,
@@ -82,6 +97,9 @@ type FeedbackState = {
 	result: EvaluationResult
 	model: string
 	msUsed: number
+	responseLatencyMs?: number
+	utteranceDurationMs?: number
+	spoken?: boolean
 }
 
 type SourceDiagnostics = {
@@ -153,22 +171,34 @@ function sourceTags(item: SourceItem) {
 	return tags
 }
 
+function sessionIntentKey(userId: string, dateKey: string) {
+	return `olingo.session-intent:${userId}:${dateKey}`
+}
+
 export default function Study() {
 	const { userId } = useAuth()
 	const {
 		dailyGoal,
 		programWeek,
+		sessionFocus,
+		sessionDomain,
+		challengeMode,
 		selectedSceneAction,
 		selectedSceneId,
 		targetLevel,
 		sentenceLength,
 		setTargetLevel,
-		setSentenceLength,
+		setSessionFocus,
+		setSessionDomain,
+		setChallengeMode,
 	} = useSettings()
 	const [todayKey, setTodayKey] = useState(() => getTodayDateKey())
+	const [sessionConfirmed, setSessionConfirmed] = useState(false)
 	const [session, setSession] = useState<DailySession | null>(null)
 	const [sessionItems, setSessionItems] = useState<DailySessionItem[]>([])
 	const [sentenceQueue, setSentenceQueue] = useState<SprintItem[]>([])
+	const [sentenceRefreshLoading, setSentenceRefreshLoading] = useState(false)
+	const [sentenceRefreshError, setSentenceRefreshError] = useState<string | null>(null)
 	const [repairMistakes, setRepairMistakes] = useState<MistakeItem[]>([])
 	const [loading, setLoading] = useState(true)
 	const [answer, setAnswer] = useState('')
@@ -178,6 +208,8 @@ export default function Study() {
 	const [wordBankUsed, setWordBankUsed] = useState(false)
 	const [wordBankWords, setWordBankWords] = useState<string[]>([])
 	const [spokenFirst, setSpokenFirst] = useState(false)
+	const [speechLoading, setSpeechLoading] = useState(false)
+	const [speechError, setSpeechError] = useState<string | null>(null)
 	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
 	const [repairFeedback, setRepairFeedback] = useState<FeedbackState | null>(null)
 	const [pronunciationFeedback, setPronunciationFeedback] =
@@ -198,9 +230,18 @@ export default function Study() {
 	const [sceneCards, setSceneCards] = useState<SceneCard[]>([])
 	const [vocabularyQueue, setVocabularyQueue] = useState<VocabularyReviewCard[]>([])
 	const sessionItemsRef = useRef<DailySessionItem[]>([])
+	const sentenceRefreshPromiseRef = useRef<Promise<void> | null>(null)
 	const [pronunciationPassage, setPronunciationPassage] = useState(() =>
 		getPronunciationPassage(programWeek, targetLevel, todayKey)
 	)
+	const trainingWeek = effectiveProgramWeek(programWeek, sessionFocus)
+	const selectedFocus = focusDefinition(sessionFocus)
+
+	useEffect(() => {
+		setSessionConfirmed(
+			localStorage.getItem(sessionIntentKey(userId, todayKey)) === 'confirmed'
+		)
+	}, [todayKey, userId])
 
 	useEffect(() => {
 		sessionItemsRef.current = sessionItems
@@ -217,9 +258,13 @@ export default function Study() {
 	useEffect(() => {
 		let mounted = true
 		async function load() {
+			if (!sessionConfirmed) {
+				setLoading(false)
+				return
+			}
 			setLoading(true)
 			const sprintLimit = Math.max(16, Math.min(28, Math.round(dailyGoal / 2) + 10))
-			const cards = await loadSceneCards(userId, programWeek)
+			const cards = await loadSceneCards(userId, trainingWeek)
 			const selectedScene =
 				cards.find((card) => card.id === selectedSceneId && card.available) ??
 				cards.find((card) => card.available) ??
@@ -235,22 +280,27 @@ export default function Study() {
 						sceneId: selectedScene.id,
 						sceneTitle: selectedScene.title,
 						sceneAction: selectedAction,
-						programWeek,
+						programWeek: trainingWeek,
+						sessionFocus,
+						sessionDomain,
+						challengeMode,
 						generateFresh: false,
 					}),
 					loadDueMistakes(userId, 3),
-					selectPronunciationPassage(userId, programWeek, targetLevel, todayKey),
+					selectPronunciationPassage(userId, trainingWeek, targetLevel, todayKey),
 				])
 			const sentenceItems = queue
 				.filter((item) => !item.sourceMistakeId)
-				.slice(0, 10)
+				.slice(0, 20)
 			const sceneId =
 				sentenceItems[0]?.exercise.sceneId ??
 				queue[0]?.exercise.sceneId ??
 				selectedScene.id
 			const vocabularyCards = await loadVocabularyReviewQueue(userId, sceneId, {
-				programWeek,
+				programWeek: trainingWeek,
 				targetLevel,
+				sessionDomain,
+				sessionFocus,
 				limit: 24,
 				dateKey: todayKey,
 			})
@@ -258,11 +308,15 @@ export default function Study() {
 			const bundle = await getOrCreateDailySession(
 				userId,
 				{
-					programWeek,
+					programWeek: trainingWeek,
 					dailyGoal,
 					vocabularyCount,
 					sentenceCount: sentenceItems.length,
 					repairCount: dueMistakes.length,
+					targetLevel,
+					sessionFocus,
+					sessionDomain,
+					challengeMode,
 				},
 				todayKey
 			)
@@ -271,6 +325,8 @@ export default function Study() {
 			setPronunciationPassage(selectedPronunciationPassage)
 			setVocabularyQueue(vocabularyCards)
 			setSentenceQueue(sentenceItems)
+			setSentenceRefreshLoading(false)
+			setSentenceRefreshError(null)
 			setRepairMistakes(dueMistakes)
 			setSession(bundle.session)
 			setSessionItems(bundle.items)
@@ -283,6 +339,8 @@ export default function Study() {
 			setPronunciationError(null)
 			setPronunciationLoading(false)
 			setSpokenFirst(false)
+			setSpeechLoading(false)
+			setSpeechError(null)
 			setSourceReflection('')
 			setTransferFeedback(null)
 			setTransferError(null)
@@ -296,13 +354,17 @@ export default function Study() {
 			mounted = false
 		}
 	}, [
+		challengeMode,
 		dailyGoal,
-		programWeek,
+		sessionConfirmed,
+		sessionDomain,
+		sessionFocus,
 		sentenceLength,
 		selectedSceneAction,
 		selectedSceneId,
 		targetLevel,
 		todayKey,
+		trainingWeek,
 		userId,
 	])
 
@@ -333,15 +395,7 @@ export default function Study() {
 					status: 'active' as const,
 			  }
 			: activeItem
-	const currentSentenceIndex =
-		sentenceQueue.length && sentenceActivity
-			? bonusPracticeActive
-				? sentenceActivity.completedCount % sentenceQueue.length
-				: Math.min(
-						sentenceActivity.completedCount,
-						Math.max(0, sentenceQueue.length - 1)
-				  )
-			: 0
+	const currentSentenceIndex = sentenceActivity?.completedCount ?? 0
 	const current = sentenceQueue[currentSentenceIndex]
 	const currentMistake = repairMistakes[
 		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
@@ -363,32 +417,40 @@ export default function Study() {
 		: scene.actions[0]
 
 	useEffect(() => {
-		if (loading) return
+		if (loading || !sessionConfirmed) return
 		let cancelled = false
 		const timer = window.setTimeout(() => {
 			void (async () => {
+				setSentenceRefreshLoading(true)
+				setSentenceRefreshError(null)
 				const sentenceOptions = {
 					targetLevel,
 					sentenceLength,
-					programWeek,
+					programWeek: trainingWeek,
 					sceneId: scene.id,
 					sceneTitle: scene.title,
 					action: generationAction,
+					sessionFocus,
+					sessionDomain,
+					challengeMode,
 					minFresh: 18,
 				}
-				await Promise.all([
+				const [sentenceGeneration, vocabularyGeneration, pronunciationGeneration] =
+					await Promise.allSettled([
 					ensureGeneratedSentencePool(userId, sentenceOptions),
 					ensureGeneratedVocabularyPool(userId, scene.id, {
-						programWeek,
+						programWeek: trainingWeek,
 						targetLevel,
+						sessionDomain,
+						sessionFocus,
 						minFresh: 24,
 					}),
 					ensureGeneratedPronunciationPool(userId, {
-						programWeek,
+						programWeek: trainingWeek,
 						targetLevel,
 						minFresh: 6,
 					}),
-				])
+					])
 				if (cancelled) return
 
 				const latestItems = sessionItemsRef.current
@@ -399,7 +461,10 @@ export default function Study() {
 					(item) => item.type === 'pronunciation'
 				)
 
-				if (!sentenceItem?.completedCount) {
+				if (
+					sentenceGeneration.status === 'fulfilled' &&
+					!sentenceItem?.completedCount
+				) {
 					const refreshed = await loadDailySprint(userId, 24, {
 						...sentenceOptions,
 						sceneAction: sentenceOptions.action,
@@ -407,30 +472,46 @@ export default function Study() {
 					})
 					if (!cancelled) {
 						setSentenceQueue(
-							refreshed.filter((item) => !item.sourceMistakeId).slice(0, 10)
+							refreshed.filter((item) => !item.sourceMistakeId).slice(0, 20)
 						)
 					}
 				}
-				if (!matchItem?.completedCount && !recallItem?.completedCount) {
+				if (
+					vocabularyGeneration.status === 'fulfilled' &&
+					!matchItem?.completedCount &&
+					!recallItem?.completedCount
+				) {
 					const refreshed = await loadVocabularyReviewQueue(userId, scene.id, {
-						programWeek,
+						programWeek: trainingWeek,
 						targetLevel,
+						sessionDomain,
+						sessionFocus,
 						limit: 24,
 						dateKey: todayKey,
 					})
 					if (!cancelled) setVocabularyQueue(refreshed)
 				}
-				if (!pronunciationItem?.completedCount) {
+				if (
+					pronunciationGeneration.status === 'fulfilled' &&
+					!pronunciationItem?.completedCount
+				) {
 					const refreshed = await selectPronunciationPassage(
 						userId,
-						programWeek,
+						trainingWeek,
 						targetLevel,
 						todayKey
 					)
 					if (!cancelled) setPronunciationPassage(refreshed)
 				}
+				setSentenceRefreshLoading(false)
 			})().catch((error) => {
-				if (!cancelled) console.error(error)
+				if (!cancelled) {
+					setSentenceRefreshLoading(false)
+					setSentenceRefreshError(
+						'Fresh sentence generation is temporarily unavailable. Your progress is safe.'
+					)
+					console.error(error)
+				}
 			})
 		}, 750)
 		return () => {
@@ -438,13 +519,17 @@ export default function Study() {
 			window.clearTimeout(timer)
 		}
 	}, [
+		challengeMode,
 		loading,
-		programWeek,
+		sessionConfirmed,
+		sessionDomain,
+		sessionFocus,
 		scene.id,
 		scene.title,
 		generationAction,
 		sentenceLength,
 		targetLevel,
+		trainingWeek,
 		userId,
 	])
 
@@ -470,7 +555,6 @@ export default function Study() {
 		[sourceItems]
 	)
 	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
-	const stage = useMemo(() => getCurriculumStage(programWeek), [programWeek])
 	const learningProfile = useMemo(
 		() => getLearningProfile(targetLevel),
 		[targetLevel]
@@ -567,28 +651,162 @@ export default function Study() {
 
 	async function handleSentenceSubmit(event: FormEvent) {
 		event.preventDefault()
-		if (!current || feedback || !answer.trim()) return
-		const msUsed = Date.now() - unitStartedAt
+		await submitSentenceCandidate(answer)
+	}
+
+	async function submitSentenceCandidate(
+		candidate: string,
+		voice?: Omit<VoiceRecording, 'audio'>
+	) {
+		if (!current || feedback || !candidate.trim()) return
+		const msUsed = voice
+			? voice.responseLatencyMs + voice.utteranceDurationMs
+			: Date.now() - unitStartedAt
 		const result = await submitExerciseAnswer({
 			userId,
 			item: current,
-			answer,
+			answer: candidate.trim(),
+			targetLevel,
+			sessionFocus,
+			sessionDomain,
 			hintsUsed: hintsRevealed + (wordBankUsed ? 1 : 0),
 			conceptHintsUsed: hintsRevealed,
 			wordBankUsed,
-			spokenFirst,
+			spokenFirst: Boolean(voice) || spokenFirst,
+			spoken: Boolean(voice),
+			responseLatencyMs: voice?.responseLatencyMs,
+			utteranceDurationMs: voice?.utteranceDurationMs,
 			mode: 'sentence',
 			msUsed,
 		})
+		setAnswer(candidate.trim())
+		setSpokenFirst(Boolean(voice) || spokenFirst)
 		setFeedback({
 			result: result.result,
 			model: current.exercise.targetItalian,
 			msUsed,
+			responseLatencyMs: voice?.responseLatencyMs,
+			utteranceDurationMs: voice?.utteranceDurationMs,
+			spoken: Boolean(voice),
 		})
+	}
+
+	async function handleSentenceRecording(recording: VoiceRecording) {
+		if (!current || feedback || speechLoading) return
+		setSpeechLoading(true)
+		setSpeechError(null)
+		try {
+			const form = new FormData()
+			form.append('audio', recording.audio, 'olingo-sentence.webm')
+			form.append(
+				'context',
+				[
+					current.exercise.vocabDomain,
+					current.exercise.communicativeFunction,
+					current.exercise.phraseFamily,
+				]
+					.filter(Boolean)
+					.join(', ')
+			)
+			form.append('skillId', current.skillId ?? current.exercise.id)
+			form.append('responseLatencyMs', String(recording.responseLatencyMs))
+			form.append('utteranceDurationMs', String(recording.utteranceDurationMs))
+			const response = await apiFetch('/api/transcribe-speech', {
+				method: 'POST',
+				body: form,
+			})
+			const data = (await response.json().catch(() => null)) as {
+				transcript?: string
+				error?: string
+			} | null
+			if (!response.ok || !data?.transcript) {
+				throw new Error(
+					friendlyApiError(
+						response.status,
+						data?.error,
+						'Speech could not be checked. You can type the sentence instead.'
+					)
+				)
+			}
+			await submitSentenceCandidate(data.transcript, {
+				responseLatencyMs: recording.responseLatencyMs,
+				utteranceDurationMs: recording.utteranceDurationMs,
+			})
+		} catch (error) {
+			setSpeechError(
+				error instanceof Error
+					? error.message
+					: 'Speech could not be checked. You can type the sentence instead.'
+			)
+		} finally {
+			setSpeechLoading(false)
+		}
+	}
+
+	async function appendFreshBonusSentences(completedCount: number) {
+		if (completedCount < sentenceQueue.length - 3) return
+		if (sentenceRefreshPromiseRef.current) {
+			await sentenceRefreshPromiseRef.current
+			return
+		}
+		const refresh = (async () => {
+			setSentenceRefreshLoading(true)
+			setSentenceRefreshError(null)
+			try {
+				const options = {
+					targetLevel,
+					sentenceLength,
+					programWeek: trainingWeek,
+					sceneId: scene.id,
+					sceneTitle: scene.title,
+					action: generationAction,
+					sessionFocus,
+					sessionDomain,
+					challengeMode,
+					minFresh: 24,
+				}
+				await ensureGeneratedSentencePool(userId, options)
+				const refreshed = await loadDailySprint(userId, 28, {
+					...options,
+					sceneAction: generationAction,
+					generateFresh: false,
+				})
+				const knownIds = new Set(sentenceQueue.map((item) => item.exercise.id))
+				const additions = refreshed.filter(
+					(item) => !item.sourceMistakeId && !knownIds.has(item.exercise.id)
+				)
+				if (!additions.length) {
+					setSentenceRefreshError(
+						'No vetted new sentences arrived. Try again in a moment.'
+					)
+					return
+				}
+				setSentenceQueue((existing) => {
+					const ids = new Set(existing.map((item) => item.exercise.id))
+					return [
+						...existing,
+						...additions.filter((item) => !ids.has(item.exercise.id)),
+					]
+				})
+			} catch {
+				setSentenceRefreshError(
+					'Fresh sentence generation is temporarily unavailable. Your progress is safe.'
+				)
+			} finally {
+				setSentenceRefreshLoading(false)
+			}
+		})()
+		sentenceRefreshPromiseRef.current = refresh
+		try {
+			await refresh
+		} finally {
+			sentenceRefreshPromiseRef.current = null
+		}
 	}
 
 	async function nextSentence() {
 		if (!feedback || !current) return
+		const nextCompletedCount = (sentenceActivity?.completedCount ?? 0) + 1
 		await recordUnit(sentenceActivity ?? null, {
 			activeMs: feedback.msUsed,
 			success: feedback.result.communicative,
@@ -604,7 +822,11 @@ export default function Study() {
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
+		setSpeechError(null)
 		setFeedback(null)
+		if (bonusPracticeActive || nextCompletedCount >= sentenceQueue.length - 3) {
+			void appendFreshBonusSentences(nextCompletedCount).catch(console.error)
+		}
 	}
 
 	async function handleRepairSubmit(event: FormEvent) {
@@ -818,6 +1040,40 @@ export default function Study() {
 		setWordBankUsed(false)
 		setSpokenFirst(false)
 		setUnitStartedAt(Date.now())
+		void appendFreshBonusSentences(sentenceActivity?.completedCount ?? 0)
+	}
+
+	function beginDailySession() {
+		if (!focusAvailableAtLevel(sessionFocus, targetLevel)) {
+			setSessionFocus('adaptive')
+		}
+		localStorage.setItem(sessionIntentKey(userId, todayKey), 'confirmed')
+		setSessionConfirmed(true)
+		setLoading(true)
+	}
+
+	function changeSessionIntent() {
+		localStorage.removeItem(sessionIntentKey(userId, todayKey))
+		setSessionConfirmed(false)
+		setBonusPractice(false)
+		setSpeechError(null)
+	}
+
+	if (!sessionConfirmed) {
+		return (
+			<SessionLauncher
+				challengeMode={challengeMode}
+				dailyGoal={dailyGoal}
+				sessionDomain={sessionDomain}
+				sessionFocus={sessionFocus}
+				targetLevel={targetLevel}
+				onChallengeMode={setChallengeMode}
+				onSessionDomain={setSessionDomain}
+				onSessionFocus={setSessionFocus}
+				onStart={beginDailySession}
+				onTargetLevel={setTargetLevel}
+			/>
+		)
 	}
 
 	if (loading) {
@@ -863,8 +1119,8 @@ export default function Study() {
 					</div>
 					<div>
 						<p className="eyebrow">Today&apos;s session</p>
-						<h2>{stage.title}</h2>
-						<p>{stage.goals.slice(0, 3).join(' - ')}</p>
+						<h2>{selectedFocus.label}</h2>
+						<p>{selectedFocus.description}</p>
 					</div>
 					<SessionChecklist items={sessionItems} activeItem={activeSessionItem} />
 					<a
@@ -889,7 +1145,12 @@ export default function Study() {
 					<div>
 						<span>{bonusPracticeActive ? 'Bonus practice' : 'Current focus'}</span>
 						<strong>
-							{bonusPracticeActive ? 'Keep building fast sentences' : stage.title}
+							{bonusPracticeActive
+								? 'Keep building fast sentences'
+								: `${selectedFocus.label} in ${
+										sessionDomains.find((domain) => domain.id === sessionDomain)
+											?.label.toLowerCase() ?? 'mixed situations'
+								  }`}
 						</strong>
 					</div>
 					<p>
@@ -897,6 +1158,10 @@ export default function Study() {
 						{progress.bonus ? `, plus ${progress.bonus} bonus rep(s).` : '.'}{' '}
 						{targetLevel} speech: {learningProfile.guidance}
 					</p>
+					<button className="btn btn-secondary" type="button" onClick={changeSessionIntent}>
+						<Layers size={17} />
+						Change today&apos;s focus
+					</button>
 				</div>
 
 				<div className="session-plan" aria-label="Daily session plan">
@@ -906,31 +1171,6 @@ export default function Study() {
 							<span>{item.label}</span>
 						</div>
 					))}
-				</div>
-
-				<div className="level-row">
-					<div className="segmented compact">
-						{cefrLevels.map((level) => (
-							<button
-								type="button"
-								key={level}
-								className={targetLevel === level ? 'active' : ''}
-								onClick={() => setTargetLevel(level)}>
-								{level}
-							</button>
-						))}
-					</div>
-					<div className="segmented compact">
-						{(['short', 'medium', 'long'] as const).map((length) => (
-							<button
-								type="button"
-								key={length}
-								className={sentenceLength === length ? 'active' : ''}
-								onClick={() => setSentenceLength(length)}>
-								{length}
-							</button>
-						))}
-					</div>
 				</div>
 
 				<ActivityShell item={activeSessionItem}>
@@ -967,7 +1207,9 @@ export default function Study() {
 							currentPhase={currentPhase}
 							feedback={feedback}
 							hintsRevealed={hintsRevealed}
-							spokenFirst={spokenFirst}
+							promptStartedAt={unitStartedAt}
+							speechError={speechError}
+							speechLoading={speechLoading}
 							visibleHints={visibleHints}
 							wordBankVisible={wordBankVisible}
 							wordBankWords={wordBankWords}
@@ -977,9 +1219,43 @@ export default function Study() {
 							onNext={nextSentence}
 							onRevealHint={revealHint}
 							onRevealWordBank={revealWordBank}
-							onSetSpokenFirst={setSpokenFirst}
+							onRecording={handleSentenceRecording}
 							onSubmit={handleSentenceSubmit}
 						/>
+					)}
+
+					{activeSessionItem?.type === 'sentence' && !current && (
+						<div className="sentence-queue-pause" role="status">
+							<Loader2
+								className={sentenceRefreshLoading ? 'spin' : undefined}
+								size={24}
+							/>
+							<strong>
+								{sentenceRefreshLoading
+									? 'Preparing a fresh sentence'
+									: 'Fresh sentence needed'}
+							</strong>
+							<p>
+								Olingo will not repeat the last prompt just to keep the counter moving.
+							</p>
+							{sentenceRefreshError && <span>{sentenceRefreshError}</span>}
+							<button
+								className="btn btn-primary"
+								type="button"
+								disabled={sentenceRefreshLoading}
+								onClick={() =>
+									void appendFreshBonusSentences(
+										sentenceActivity?.completedCount ?? sentenceQueue.length
+									)
+								}>
+								{sentenceRefreshLoading ? (
+									<Loader2 className="spin" size={18} />
+								) : (
+									<Sparkles size={18} />
+								)}
+								Try for a fresh pack
+							</button>
+						</div>
 					)}
 
 					{activeSessionItem?.type === 'repair' && currentMistake && (
@@ -1054,6 +1330,144 @@ export default function Study() {
 					</div>
 				</div>
 			</section>
+		</div>
+	)
+}
+
+function SessionLauncher({
+	challengeMode,
+	dailyGoal,
+	onChallengeMode,
+	onSessionDomain,
+	onSessionFocus,
+	onStart,
+	onTargetLevel,
+	sessionDomain,
+	sessionFocus,
+	targetLevel,
+}: {
+	challengeMode: ChallengeMode
+	dailyGoal: number
+	onChallengeMode: (mode: ChallengeMode) => void
+	onSessionDomain: (domain: SessionDomain) => void
+	onSessionFocus: (focus: SessionFocus) => void
+	onStart: () => void
+	onTargetLevel: (level: CefrLevel) => void
+	sessionDomain: SessionDomain
+	sessionFocus: SessionFocus
+	targetLevel: CefrLevel
+}) {
+	const selected = focusDefinition(sessionFocus)
+	const domain =
+		sessionDomains.find((item) => item.id === sessionDomain)?.label ??
+		'Mixed situations'
+
+	return (
+		<div className="session-launcher">
+			<header className="session-launcher-heading">
+				<p className="eyebrow">Choose today&apos;s practice</p>
+				<h1>What do you want to say more easily?</h1>
+				<p>
+					Olingo will build a short staircase from a supported model to an
+					unprompted reply, then remember the skill for later review.
+				</p>
+			</header>
+
+			<section className="launcher-section" aria-labelledby="level-heading">
+				<div className="launcher-section-heading">
+					<span>1</span>
+					<div>
+						<h2 id="level-heading">Choose your level</h2>
+						<p>The language and pace will stay inside this level.</p>
+					</div>
+				</div>
+				<div className="segmented level-selector">
+					{cefrLevels.map((level) => (
+						<button
+							className={targetLevel === level ? 'active' : ''}
+							key={level}
+							type="button"
+							onClick={() => onTargetLevel(level)}>
+							{level}
+						</button>
+					))}
+				</div>
+			</section>
+
+			<section className="launcher-section" aria-labelledby="focus-heading">
+				<div className="launcher-section-heading">
+					<span>2</span>
+					<div>
+						<h2 id="focus-heading">Choose a speaking skill</h2>
+						<p>Repeat the pattern, not the same sentence.</p>
+					</div>
+				</div>
+				<div className="focus-choice-grid">
+					{sessionFocusDefinitions.map((focus) => {
+						const available = focusAvailableAtLevel(focus.id, targetLevel)
+						return (
+							<button
+								className={sessionFocus === focus.id ? 'focus-choice active' : 'focus-choice'}
+								disabled={!available}
+								key={focus.id}
+								type="button"
+								onClick={() => onSessionFocus(focus.id)}>
+								<strong>{focus.label}</strong>
+								<span>{focus.description}</span>
+								{!available && <small>From {focus.minLevel}</small>}
+							</button>
+						)
+					})}
+				</div>
+			</section>
+
+			<section className="launcher-options">
+				<div className="launcher-option">
+					<label htmlFor="session-domain">Situation</label>
+					<select
+						id="session-domain"
+						value={sessionDomain}
+						onChange={(event) => onSessionDomain(event.target.value as SessionDomain)}>
+						{sessionDomains.map((item) => (
+							<option key={item.id} value={item.id}>
+								{item.label}
+							</option>
+						))}
+					</select>
+				</div>
+				<div className="launcher-option">
+					<span className="field-label">Challenge</span>
+					<div className="segmented challenge-selector">
+						{challengeModes.map((mode) => (
+							<button
+								className={challengeMode === mode.id ? 'active' : ''}
+								key={mode.id}
+								title={mode.description}
+								type="button"
+								onClick={() => onChallengeMode(mode.id)}>
+								{mode.label}
+							</button>
+						))}
+					</div>
+				</div>
+			</section>
+
+			<footer className="launcher-summary">
+				<div>
+					<span>Today&apos;s practice</span>
+					<strong>
+						{targetLevel} {selected.shortLabel} - {domain}
+					</strong>
+					<p>
+						About {dailyGoal} minutes. Core speaking comes first; reading or video
+						finishes the session.
+					</p>
+				</div>
+				<button className="btn btn-primary launcher-start" type="button" onClick={onStart}>
+					<Play size={18} />
+					Build today&apos;s session
+				</button>
+			</footer>
 		</div>
 	)
 }
@@ -1158,7 +1572,9 @@ function SentenceBuilder({
 	currentPhase,
 	feedback,
 	hintsRevealed,
-	spokenFirst,
+	promptStartedAt,
+	speechError,
+	speechLoading,
 	visibleHints,
 	wordBankVisible,
 	wordBankWords,
@@ -1166,9 +1582,9 @@ function SentenceBuilder({
 	onAnswer,
 	onHearModel,
 	onNext,
+	onRecording,
 	onRevealHint,
 	onRevealWordBank,
-	onSetSpokenFirst,
 	onSubmit,
 }: {
 	answer: string
@@ -1177,7 +1593,9 @@ function SentenceBuilder({
 	currentPhase: string
 	feedback: FeedbackState | null
 	hintsRevealed: number
-	spokenFirst: boolean
+	promptStartedAt: number
+	speechError: string | null
+	speechLoading: boolean
 	visibleHints: string[]
 	wordBankVisible: boolean
 	wordBankWords: string[]
@@ -1185,12 +1603,43 @@ function SentenceBuilder({
 	onAnswer: (answer: string) => void
 	onHearModel: () => void
 	onNext: () => void
+	onRecording: (recording: VoiceRecording) => void
 	onRevealHint: () => void
 	onRevealWordBank: () => void
-	onSetSpokenFirst: (value: boolean) => void
 	onSubmit: (event: FormEvent) => void
 }) {
+	const cueMode = current.cueMode ?? 'english'
+	const complexityStep = current.complexityStep ?? 3
+	const anchor = current.exercise.targetItalian.split(/\s+/).slice(0, 2).join(' ')
+	const hasConversationCue = Boolean(current.exercise.npcLine?.trim())
+	const cue =
+		cueMode === 'model'
+			? {
+					label: 'Copy this useful pattern aloud',
+					prompt: current.exercise.targetItalian,
+					className: 'prompt prompt-italian',
+			  }
+			: cueMode === 'anchor'
+			? {
+					label: 'Build from the Italian anchor',
+					prompt: `${current.exercise.promptEnglish}  ${anchor}...`,
+					className: 'prompt',
+			  }
+			: cueMode === 'english'
+			? {
+					label: 'Say this in Italian',
+					prompt: current.exercise.promptEnglish,
+					className: 'prompt',
+			  }
+			: {
+					label: cueMode === 'interaction' ? 'Reply in Italian' : 'Respond in Italian',
+					prompt: hasConversationCue
+						? current.exercise.communicativeGoal
+						: current.exercise.promptEnglish,
+					className: 'prompt prompt-situation',
+			  }
 	const frameMeta = [
+		`Step ${complexityStep} of 5`,
 		`${current.exercise.cefrLevel ?? current.levelBand ?? 'target'} ${
 			current.reviewKind === 'scheduled-review'
 				? 'scheduled review'
@@ -1228,35 +1677,34 @@ function SentenceBuilder({
 				))}
 			</div>
 
-			{current.exercise.npcLine && (
+			{hasConversationCue && cueMode !== 'model' && (
 				<div className="npc-line">
-					<span>NPC</span>
+					<span>Italian speaker</span>
 					<p>{current.exercise.npcLine}</p>
 				</div>
 			)}
 
 			<form className="answer-card" onSubmit={onSubmit}>
-				<label htmlFor="answer">Say this in Italian</label>
-				<p className="prompt">{current.exercise.promptEnglish}</p>
-				<div className={spokenFirst ? 'speak-gate done' : 'speak-gate'}>
-					<div>
-						<span>
-							<Mic2 size={16} />
-							Say it first
-						</span>
-						<p>
-							{current.exercise.spokenCue ??
-								'Make a rough spoken attempt before you type. It does not need to be perfect.'}
-						</p>
-					</div>
-					<button
-						className={spokenFirst ? 'btn btn-primary' : 'btn btn-secondary'}
-						type="button"
-						onClick={() => onSetSpokenFirst(true)}>
-						<Mic2 size={18} />
-						{spokenFirst ? 'Spoken' : 'I said it'}
-					</button>
+				<label htmlFor="answer">{cue.label}</label>
+				<p className={cue.className}>{cue.prompt}</p>
+				<div className="complexity-stair" aria-label={`Complexity step ${complexityStep} of 5`}>
+					{[1, 2, 3, 4, 5].map((step) => (
+						<span className={step <= complexityStep ? 'active' : ''} key={step} />
+					))}
 				</div>
+				<div className="speak-gate">
+					<div>
+						<span><Mic2 size={16} />Answer aloud first</span>
+						<p>{current.exercise.spokenCue ?? 'Say the first usable answer that comes to mind.'}</p>
+					</div>
+					<SentenceVoiceRecorder
+						busy={speechLoading}
+						disabled={Boolean(feedback)}
+						promptStartedAt={promptStartedAt}
+						onRecording={onRecording}
+					/>
+				</div>
+				{speechError && <p className="field-error speech-error">{speechError}</p>}
 				<textarea
 					id="answer"
 					value={answer}
@@ -1303,6 +1751,11 @@ function SentenceBuilder({
 						<strong>{feedback.result.message}</strong>
 						<span className="feedback-note">{feedback.result.shortFeedback}</span>
 						<p>{feedback.model}</p>
+						{feedback.spoken && (
+							<span className="voice-result">
+								Spoken answer started in {formatDuration(feedback.responseLatencyMs ?? 0)}
+							</span>
+						)}
 						<div className="feedback-actions">
 							{canTTS() && (
 								<button
@@ -1310,7 +1763,7 @@ function SentenceBuilder({
 										type="button"
 										onClick={onHearModel}>
 										<Volume2 size={18} />
-										AI model
+										Hear Italian
 								</button>
 							)}
 						</div>
@@ -1480,11 +1933,11 @@ function GuidedRecallCards({
 
 	return (
 		<div className="answer-card flashcard-mode">
-			<label>Recall aloud</label>
+			<label>See the meaning, say the Italian aloud</label>
 			<div className="word-card">
 				<span>{card.partOfSpeech}</span>
-				<strong>{card.italian}</strong>
-				{revealed && <p>{card.english}</p>}
+				<strong>{card.english}</strong>
+				{revealed && <p>{card.italian}</p>}
 			</div>
 			<div className="control-bar">
 				<button
@@ -1569,7 +2022,7 @@ function DailyRepair({
 							type="button"
 							onClick={() => speak(mistake.correctedItalian, 'it-IT')}>
 							<Volume2 size={18} />
-							AI model
+							Hear Italian
 						</button>
 				)}
 				{feedback ? (
@@ -1766,7 +2219,7 @@ function PronunciationActivity({
 				{canTTS() && (
 					<button className="btn btn-secondary" type="button" onClick={onHearModel}>
 						<Volume2 size={18} />
-						AI model
+						Hear Italian
 					</button>
 				)}
 				{recording ? (

@@ -81,7 +81,7 @@ export const spokenCoreSpiral = [
 	{
 		weeks: [1, 4] as [number, number],
 		activeTenses: ['present'] as TenseFocus[],
-		label: 'Present, questions, possessives, c e / ci sono',
+		label: "Present, questions, possessives, c'è / ci sono",
 	},
 	{
 		weeks: [5, 8] as [number, number],
@@ -305,7 +305,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 6,
 		utilityScore: 90,
 		seedEnglish: 'I like it, but it is slow.',
-		seedItalian: 'Mi piace, ma e lento.',
+		seedItalian: 'Mi piace, ma è lento.',
 		slotHints: ['lento', 'interessante', 'troppo lungo', 'divertente'],
 		tags: ['opinion', 'culture', 'present'],
 	},
@@ -350,7 +350,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 7,
 		utilityScore: 95,
 		seedEnglish: 'Where is platform two?',
-		seedItalian: 'Dov e il binario due?',
+		seedItalian: "Dov'è il binario due?",
 		slotHints: ['binario due', 'bagno', 'uscita', 'fermata'],
 		tags: ['question', 'travel', 'location'],
 	},
@@ -410,7 +410,7 @@ export const conversationFrames: ConversationFrame[] = [
 		maxWords: 7,
 		utilityScore: 89,
 		seedEnglish: 'What is the score?',
-		seedItalian: 'Qual e il risultato?',
+		seedItalian: 'Qual è il risultato?',
 		slotHints: ['risultato', 'partita', 'squadra', 'primo tempo'],
 		tags: ['sport', 'question', 'present'],
 	},
@@ -657,6 +657,8 @@ export function getConversationFramesForWeek(
 		targetLevel?: CefrLevel
 		action?: string
 		domains?: VocabDomain[]
+		tenseFocuses?: TenseFocus[]
+		communicativeFunctions?: CommunicativeFunction[]
 		limit?: number
 	} = {}
 ) {
@@ -664,12 +666,23 @@ export function getConversationFramesForWeek(
 	const activeTenses = new Set(getActiveTenseFocusesForWeek(safeWeek))
 	const actionFunctions = options.action ? functionByAction[options.action] : undefined
 	const domainSet = options.domains?.length ? new Set(options.domains) : null
+	const tenseSet = options.tenseFocuses?.length
+		? new Set(options.tenseFocuses)
+		: null
+	const functionSet = options.communicativeFunctions?.length
+		? new Set(options.communicativeFunctions)
+		: null
 
 	const scored = conversationFrames
 		.filter((frame) => weekAllowed(frame, safeWeek))
 		.filter((frame) => activeTenses.has(frame.tenseFocus))
+		.filter((frame) => !tenseSet || tenseSet.has(frame.tenseFocus))
 		.filter((frame) => levelAllowed(frame, options.targetLevel))
 		.filter((frame) => !domainSet || domainSet.has(frame.vocabDomain))
+		.filter(
+			(frame) =>
+				!functionSet || functionSet.has(frame.communicativeFunction)
+		)
 		.map((frame) => {
 			const actionScore =
 				actionFunctions?.includes(frame.communicativeFunction) ? 30 : 0
@@ -702,10 +715,177 @@ export function getGenerationFramesForWeek(
 		vocabDomain: frame.vocabDomain,
 		maxWords: frame.maxWords,
 		utilityScore: frame.utilityScore,
-		cefrLevel: introducedAt(frame),
+		cefrLevel:
+			options.targetLevel && frame.cefrLevels.includes(options.targetLevel)
+				? options.targetLevel
+				: introducedAt(frame),
 		seedEnglish: frame.seedEnglish,
 		seedItalian: frame.seedItalian,
 		slotHints: frame.slotHints,
 		tags: frame.tags,
 	}))
+}
+
+const matrixSeeds: Record<
+	TenseFocus,
+	Array<{
+		english: string
+		italian: string
+		communicativeFunction: CommunicativeFunction
+	}>
+> = {
+	present: [
+		{ english: 'And what do you think?', italian: 'E tu che cosa ne pensi?', communicativeFunction: 'ask-back' },
+		{ english: 'It is here.', italian: 'È qui.', communicativeFunction: 'locate' },
+		{ english: 'I like it.', italian: 'Mi piace.', communicativeFunction: 'react' },
+		{ english: 'I like it because it is useful.', italian: 'Mi piace perché è utile.', communicativeFunction: 'give-reason' },
+		{ english: 'I did not understand.', italian: 'Non ho capito.', communicativeFunction: 'repair' },
+	],
+	'modal-infinitive': [
+		{ english: 'Can I help?', italian: 'Posso aiutare?', communicativeFunction: 'offer' },
+		{ english: 'Can you help me?', italian: 'Puoi aiutarmi?', communicativeFunction: 'request' },
+		{ english: 'I have to leave now.', italian: 'Devo partire adesso.', communicativeFunction: 'plan' },
+		{ english: 'Do you want to come with us?', italian: 'Vuoi venire con noi?', communicativeFunction: 'ask-back' },
+		{ english: 'Can you repeat that?', italian: 'Puoi ripeterlo?', communicativeFunction: 'repair' },
+	],
+	imperative: [
+		{ english: 'Tell me, please.', italian: 'Dimmi, per favore.', communicativeFunction: 'request' },
+		{ english: 'Wait a moment.', italian: 'Aspetta un momento.', communicativeFunction: 'request' },
+		{ english: 'Come with us.', italian: 'Vieni con noi.', communicativeFunction: 'plan' },
+		{ english: 'Let me know later.', italian: 'Fammi sapere dopo.', communicativeFunction: 'ask-back' },
+		{ english: 'Listen to me for a moment.', italian: 'Ascoltami un momento.', communicativeFunction: 'repair' },
+	],
+	'passato-prossimo': [
+		{ english: 'I have already done it.', italian: "L'ho già fatto.", communicativeFunction: 'narrate' },
+		{ english: 'I called this morning.', italian: 'Ho chiamato stamattina.', communicativeFunction: 'narrate' },
+		{ english: 'We arrived late.', italian: 'Siamo arrivati tardi.', communicativeFunction: 'narrate' },
+		{ english: 'I saw them yesterday.', italian: 'Li ho visti ieri.', communicativeFunction: 'narrate' },
+		{ english: 'I liked it very much.', italian: 'Mi è piaciuto molto.', communicativeFunction: 'react' },
+	],
+	imperfect: [
+		{ english: 'I often came here.', italian: 'Venivo spesso qui.', communicativeFunction: 'narrate' },
+		{ english: 'We always ate together.', italian: 'Mangiavamo sempre insieme.', communicativeFunction: 'narrate' },
+		{ english: 'It was quieter before.', italian: 'Prima era più tranquillo.', communicativeFunction: 'react' },
+		{ english: 'While I was waiting, I read.', italian: 'Mentre aspettavo, leggevo.', communicativeFunction: 'narrate' },
+		{ english: 'I did not know what to say.', italian: 'Non sapevo cosa dire.', communicativeFunction: 'repair' },
+	],
+	future: [
+		{ english: 'We will meet tomorrow.', italian: 'Ci vedremo domani.', communicativeFunction: 'plan' },
+		{ english: 'I will call you later.', italian: 'Ti chiamerò più tardi.', communicativeFunction: 'offer' },
+		{ english: 'We will decide tonight.', italian: 'Decideremo stasera.', communicativeFunction: 'plan' },
+		{ english: 'I will bring it tomorrow.', italian: 'Lo porterò domani.', communicativeFunction: 'offer' },
+		{ english: 'We will talk after dinner.', italian: 'Ne parleremo dopo cena.', communicativeFunction: 'plan' },
+	],
+	conditional: [
+		{ english: 'Could you help me?', italian: 'Potresti aiutarmi?', communicativeFunction: 'request' },
+		{ english: 'I would like to know more.', italian: 'Vorrei saperne di più.', communicativeFunction: 'request' },
+		{ english: 'Could we meet later?', italian: 'Potremmo vederci più tardi?', communicativeFunction: 'plan' },
+		{ english: 'I would prefer tomorrow.', italian: 'Preferirei domani.', communicativeFunction: 'refuse-politely' },
+		{ english: 'Should I call them?', italian: 'Dovrei chiamarli?', communicativeFunction: 'ask-back' },
+	],
+	'subjunctive-chunk': [
+		{ english: 'I think it is important.', italian: 'Penso che sia importante.', communicativeFunction: 'react' },
+		{ english: 'I hope everything goes well.', italian: 'Spero che vada tutto bene.', communicativeFunction: 'react' },
+		{ english: 'I do not think it is a problem.', italian: 'Non credo che sia un problema.', communicativeFunction: 'give-reason' },
+		{ english: 'It is better that we leave now.', italian: 'È meglio che partiamo adesso.', communicativeFunction: 'plan' },
+		{ english: 'I want you to tell me the truth.', italian: 'Voglio che tu mi dica la verità.', communicativeFunction: 'request' },
+	],
+}
+
+const matrixDomains: VocabDomain[] = [
+	'family',
+	'food',
+	'sport',
+	'cafe',
+	'travel',
+	'home',
+	'shopping',
+	'health',
+	'culture',
+	'local-news',
+]
+
+const focusTenseDefaults: Record<string, TenseFocus[]> = {
+	questions: ['present', 'modal-infinitive'],
+	pronouns: ['present', 'passato-prossimo'],
+	opinions: ['present', 'conditional'],
+	'conversation-repair': ['present', 'modal-infinitive'],
+}
+
+const focusFunctionDefaults: Record<string, CommunicativeFunction[]> = {
+	'modal-verbs': ['request', 'offer', 'plan'],
+	'past-events': ['narrate', 'react'],
+	'past-contrast': ['narrate', 'react'],
+	pronouns: ['narrate', 'request', 'offer'],
+}
+
+const focusTagAliases: Record<string, string[]> = {
+	'modal-verbs': ['modal'],
+	'past-events': ['past'],
+	'past-contrast': ['past', 'imperfect'],
+	'future-plans': ['future'],
+	'conditional-requests': ['conditional'],
+	pronouns: ['pronoun', 'clitic', 'indirect-object'],
+	opinions: ['opinion', 'reason'],
+	'conversation-repair': ['repair'],
+}
+
+export function getSessionGenerationFrames(
+	week: number,
+	options: Parameters<typeof getConversationFramesForWeek>[1] & {
+		sessionFocus?: string
+		focusLabel?: string
+	} = {}
+): GenerationFrame[] {
+	const existing = getGenerationFramesForWeek(week, options)
+	const focus = options.sessionFocus ?? 'adaptive'
+	if (focus === 'adaptive' || focus === 'fluency' || focus === 'vocabulary') {
+		return existing
+	}
+
+	const tenses =
+		options.tenseFocuses?.length
+			? options.tenseFocuses
+			: focusTenseDefaults[focus] ?? getActiveTenseFocusesForWeek(week)
+	const functions =
+		options.communicativeFunctions?.length
+			? options.communicativeFunctions
+			: focusFunctionDefaults[focus]
+	const candidates = tenses.flatMap((tense) =>
+		matrixSeeds[tense].filter(
+			(seed) => !functions?.length || functions.includes(seed.communicativeFunction)
+		)
+	)
+	const usable = candidates.length ? candidates : tenses.flatMap((tense) => matrixSeeds[tense])
+	const domains = options.domains?.length ? options.domains : matrixDomains.slice(0, 5)
+	const level = options.targetLevel ?? 'B1'
+	const maxWords = level === 'A1' || level === 'A2' ? 8 : level === 'B1' ? 10 : 12
+	const limit = Math.max(1, options.limit ?? 5)
+
+	return Array.from({ length: limit }, (_, index) => {
+		const seed = usable[index % usable.length]
+		const domain = domains[index % domains.length]
+		const tenseFocus =
+			tenses.find((tense) => matrixSeeds[tense].includes(seed)) ?? tenses[0]
+		return {
+			id: `matrix-${focus}-${tenseFocus}-${seed.communicativeFunction}-${domain}-${index}`,
+			label: options.focusLabel ?? 'Useful Spoken Pattern',
+			communicativeFunction: seed.communicativeFunction,
+			tenseFocus,
+			vocabDomain: domain,
+			maxWords,
+			utilityScore: 94,
+			cefrLevel: level,
+			seedEnglish: seed.english,
+			seedItalian: seed.italian,
+			slotHints: [domain, seed.italian],
+			tags: [
+				focus,
+				...(focusTagAliases[focus] ?? []),
+				tenseFocus,
+				seed.communicativeFunction,
+				domain,
+			],
+		}
+	})
 }

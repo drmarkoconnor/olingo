@@ -15,7 +15,7 @@ import {
 	getActiveTenseFocusesForWeek,
 	getConversationFramesForWeek,
 	getFrameById,
-	getGenerationFramesForWeek,
+	getSessionGenerationFrames,
 	recognitionOnlyTenses,
 	type CommunicativeFunction,
 	type TenseFocus,
@@ -26,6 +26,14 @@ import {
 	difficultyForCefr,
 	levelForDifficulty as cefrForDifficulty,
 } from '@/learning/learning-profile'
+import {
+	effectiveProgramWeek,
+	exerciseMatchesSessionIntent,
+	focusDefinition,
+	type ChallengeMode,
+	type SessionDomain,
+	type SessionFocus,
+} from '@/learning/session-focus'
 import { apiFetch } from '@/lib/api'
 import { db, type GeneratedExerciseItem, type MistakeItem } from '@/storage/db'
 
@@ -38,6 +46,9 @@ export type GeneratedSentenceOptions = {
 	sceneId?: string
 	sceneTitle?: string
 	action?: string
+	sessionFocus?: SessionFocus
+	sessionDomain?: SessionDomain
+	challengeMode?: ChallengeMode
 	targetCount?: number
 	minFresh?: number
 }
@@ -273,10 +284,18 @@ function exerciseMatchesOptions(
 	options: GeneratedSentenceOptions
 ) {
 	const targetLevel = normaliseTargetLevel(options.targetLevel)
+	const week = effectiveProgramWeek(
+		options.programWeek,
+		options.sessionFocus ?? 'adaptive'
+	)
 	return (
 		exercise.difficulty <= difficultyForLevel(targetLevel) &&
-		exerciseIsAvailableForWeek(exercise, options.programWeek) &&
-		sentenceFitsLength(exercise, options.sentenceLength)
+		exerciseIsAvailableForWeek(exercise, week) &&
+		sentenceFitsLength(exercise, options.sentenceLength) &&
+		exerciseMatchesSessionIntent(exercise, {
+			focus: options.sessionFocus,
+			domain: options.sessionDomain,
+		})
 	)
 }
 
@@ -291,10 +310,21 @@ export async function saveGeneratedExercises(
 ) {
 	const targetLevel = normaliseTargetLevel(options.targetLevel)
 	const now = new Date().toISOString()
-	const stage = getCurriculumStage(options.programWeek)
-	const frames = getConversationFramesForWeek(options.programWeek, {
+	const week = effectiveProgramWeek(
+		options.programWeek,
+		options.sessionFocus ?? 'adaptive'
+	)
+	const stage = getCurriculumStage(week)
+	const focus = focusDefinition(options.sessionFocus ?? 'adaptive')
+	const frames = getConversationFramesForWeek(week, {
 		targetLevel,
 		action: options.action,
+		domains:
+			options.sessionDomain && options.sessionDomain !== 'mixed'
+				? [options.sessionDomain]
+				: undefined,
+		tenseFocuses: focus.tenseFocuses,
+		communicativeFunctions: focus.communicativeFunctions,
 		limit: 18,
 	})
 	const fallbackMaxWords = defaultMaxWordsFor(targetLevel, options.sentenceLength)
@@ -461,10 +491,27 @@ export async function ensureFrameSeedFallback(
 	options: GeneratedSentenceOptions
 ) {
 	const targetLevel = normaliseTargetLevel(options.targetLevel)
-	const frames = getGenerationFramesForWeek(options.programWeek, {
+	const week = effectiveProgramWeek(
+		options.programWeek,
+		options.sessionFocus ?? 'adaptive'
+	)
+	const focus = focusDefinition(options.sessionFocus ?? 'adaptive')
+	const focusedSession = Boolean(
+		options.sessionFocus &&
+			!['adaptive', 'fluency', 'vocabulary'].includes(options.sessionFocus)
+	)
+	const frames = getSessionGenerationFrames(week, {
 		targetLevel,
 		action: options.action,
-		limit: 18,
+		domains:
+			options.sessionDomain && options.sessionDomain !== 'mixed'
+				? [options.sessionDomain]
+				: undefined,
+		tenseFocuses: focus.tenseFocuses,
+		communicativeFunctions: focus.communicativeFunctions,
+		limit: focusedSession ? 5 : 18,
+		sessionFocus: options.sessionFocus ?? 'adaptive',
+		focusLabel: focus.label,
 	}).filter((frame) => frame.cefrLevel === targetLevel)
 	if (!frames.length) return []
 
@@ -540,11 +587,24 @@ export async function ensureGeneratedSentencePool(
 		if (freshEligible.length >= refillAt) return generated
 	}
 
-	const stage = getCurriculumStage(options.programWeek)
-	const generationFrames = getGenerationFramesForWeek(options.programWeek, {
+	const week = effectiveProgramWeek(
+		options.programWeek,
+		options.sessionFocus ?? 'adaptive'
+	)
+	const stage = getCurriculumStage(week)
+	const focus = focusDefinition(options.sessionFocus ?? 'adaptive')
+	const generationFrames = getSessionGenerationFrames(week, {
 		targetLevel,
 		action: options.action,
-		limit: 14,
+		domains:
+			options.sessionDomain && options.sessionDomain !== 'mixed'
+				? [options.sessionDomain]
+				: undefined,
+		tenseFocuses: focus.tenseFocuses,
+		communicativeFunctions: focus.communicativeFunctions,
+		limit: options.sessionFocus && options.sessionFocus !== 'adaptive' ? 5 : 8,
+		sessionFocus: options.sessionFocus ?? 'adaptive',
+		focusLabel: focus.label,
 	})
 	const mistakes = await db.mistakes.where('userId').equals(userId).toArray()
 	const avoidItalian = unique([
@@ -562,11 +622,16 @@ export async function ensureGeneratedSentencePool(
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				level: targetLevel,
-				programWeek: options.programWeek,
+				programWeek: week,
 				stage,
-				activeTenseFocuses: getActiveTenseFocusesForWeek(options.programWeek),
+				activeTenseFocuses:
+					focus.tenseFocuses ?? getActiveTenseFocusesForWeek(week),
 				recognitionOnlyTenses,
 				conversationFrames: generationFrames,
+				sessionFocus: options.sessionFocus ?? 'adaptive',
+				sessionFocusLabel: focus.label,
+				sessionDomain: options.sessionDomain ?? 'mixed',
+				challengeMode: options.challengeMode ?? 'stretch',
 				sceneId: options.sceneId,
 				sceneTitle: options.sceneTitle,
 				action: options.action,

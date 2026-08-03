@@ -1,5 +1,12 @@
 import Dexie, { Table } from 'dexie'
 import type { CefrLevel, Exercise } from '@/learning/content'
+import type {
+	ChallengeMode,
+	ComplexityStep,
+	CueMode,
+	SessionDomain,
+	SessionFocus,
+} from '@/learning/session-focus'
 
 export type Word = {
 	id: string
@@ -62,7 +69,64 @@ export type ExerciseLog = {
 	phase?: string
 	action?: string
 	mode?: string
+	skillId?: string
+	complexityStep?: ComplexityStep
+	cueMode?: CueMode
+	responseLatencyMs?: number
+	utteranceDurationMs?: number
+	spoken?: 0 | 1
 	answer: string
+}
+
+export type SkillMasteryStage = 0 | 1 | 2 | 3 | 4 | 5
+
+export type SkillState = {
+	userId: string
+	skillId: string
+	label: string
+	focus: SessionFocus
+	level: CefrLevel
+	frameId?: string | null
+	tenseFocus?: string | null
+	communicativeFunction?: string | null
+	attempts: number
+	communicativeSuccesses: number
+	targetSuccesses: number
+	unassistedSuccesses: number
+	fastSpokenSuccesses: number
+	spokenAttempts: number
+	transferAttempts: number
+	transferSuccesses: number
+	totalResponseLatencyMs: number
+	bestResponseLatencyMs?: number | null
+	contexts: string[]
+	practiceDates: string[]
+	masteryStage: SkillMasteryStage
+	intervalDays: number
+	nextDueAt?: string | null
+	lastPracticedAt?: string | null
+	archived: 0 | 1
+}
+
+export type SkillAttempt = {
+	id?: number
+	userId: string
+	skillId: string
+	exerciseId: string
+	ts: string
+	level: CefrLevel
+	focus: SessionFocus
+	domain: SessionDomain
+	context: string
+	complexityStep: ComplexityStep
+	cueMode: CueMode
+	communicative: 0 | 1
+	targetAccurate: 0 | 1
+	unassisted: 0 | 1
+	spoken: 0 | 1
+	responseLatencyMs: number
+	utteranceDurationMs: number
+	hintsUsed: number
 }
 
 export type MistakeItem = {
@@ -184,6 +248,10 @@ export type DailySession = {
 	dateKey: string
 	programWeek: number
 	dailyGoal: number
+	targetLevel?: CefrLevel
+	sessionFocus?: SessionFocus
+	sessionDomain?: SessionDomain
+	challengeMode?: ChallengeMode
 	status: DailySessionStatus
 	plannedCount: number
 	completedCount: number
@@ -229,6 +297,8 @@ export class OlingoDB extends Dexie {
 	generatedPronunciationPassages!: Table<GeneratedPronunciationPassage, string>
 	dailySessions!: Table<DailySession, string>
 	dailySessionItems!: Table<DailySessionItem, string>
+	skillStates!: Table<SkillState, [string, string]>
+	skillAttempts!: Table<SkillAttempt, number>
 
 	constructor() {
 		super('olingo')
@@ -353,6 +423,34 @@ export class OlingoDB extends Dexie {
 				'&id, userId, dateKey, status, startedAt, updatedAt, completedAt',
 			dailySessionItems:
 				'&id, sessionId, userId, dateKey, type, status, sortOrder',
+		})
+		this.version(9).stores({
+			words: '&id, italian, english, pos, category',
+			userCards: '&[userId+wordId], userId, wordId, nextDueAt, archived',
+			reviewLogs: '++id, userId, wordId, ts',
+			exerciseStates:
+				'&[userId+exerciseId], userId, exerciseId, nextDueAt, archived',
+			exerciseLogs:
+				'++id, userId, exerciseId, skillId, ts, outcome, correct, spoken',
+			mistakes:
+				'&id, userId, exerciseId, sceneId, status, nextDueAt, createdAt, *tags',
+			misspellings: '&id, userId, word, correction, lastSeenAt',
+			generatedExercises:
+				'&id, userId, sceneId, cefrLevel, phraseFamily, construction, frameId, createdAt, lastUsedAt, retired, *tags',
+			sceneEpisodes:
+				'&id, userId, baseSceneId, scenarioIndex, source, createdAt, completedAt, retired',
+			pronunciationAttempts:
+				'&id, userId, dateKey, passageId, score, createdAt, provider, *problemSounds',
+			generatedPronunciationPassages:
+				'&id, userId, level, createdAt, lastUsedAt, retired, contentHash',
+			dailySessions:
+				'&id, userId, dateKey, status, startedAt, updatedAt, completedAt, sessionFocus, targetLevel',
+			dailySessionItems:
+				'&id, sessionId, userId, dateKey, type, status, sortOrder',
+			skillStates:
+				'&[userId+skillId], userId, skillId, focus, level, nextDueAt, masteryStage, archived, lastPracticedAt',
+			skillAttempts:
+				'++id, userId, skillId, exerciseId, ts, focus, level, cueMode, spoken',
 		})
 	}
 }

@@ -18,6 +18,9 @@ type Body = {
 		spokenFirst?: boolean
 		phase?: string
 		action?: string
+		level?: string
+		focus?: string
+		cueMode?: string
 	}
 }
 

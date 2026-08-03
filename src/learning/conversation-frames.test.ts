@@ -5,6 +5,7 @@ import {
 	getActiveTenseFocusesForWeek,
 	getConversationFramesForWeek,
 	getGenerationFramesForWeek,
+	getSessionGenerationFrames,
 	recognitionOnlyTenses,
 } from '@/learning/conversation-frames'
 
@@ -67,5 +68,28 @@ describe('conversation frame matrix', () => {
 		expect(b2[0].cefrLevel).toBe('B2')
 		expect(c1[0].cefrLevel).toBe('C1')
 		expect(c1.some((frame) => frame.tags.includes('reformulation'))).toBe(true)
+	})
+
+	it('provides five stable level and domain frames for a chosen activity', () => {
+		const frames = getSessionGenerationFrames(17, {
+			targetLevel: 'A2',
+			domains: ['family'],
+			tenseFocuses: ['future'],
+			communicativeFunctions: ['plan', 'offer'],
+			sessionFocus: 'future-plans',
+			focusLabel: 'Future plans',
+			limit: 5,
+		})
+
+		expect(frames).toHaveLength(5)
+		expect(new Set(frames.map((frame) => frame.id)).size).toBe(5)
+		expect(
+			frames.every(
+				(frame) =>
+					frame.cefrLevel === 'A2' &&
+					frame.vocabDomain === 'family' &&
+					frame.tenseFocus === 'future'
+			)
+		).toBe(true)
 	})
 })
