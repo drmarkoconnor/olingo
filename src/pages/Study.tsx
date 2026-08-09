@@ -54,6 +54,7 @@ import {
 	submitExerciseAnswer,
 	submitMistakeRepair,
 	type SprintItem,
+	withMinimumComplexity,
 } from '@/learning/progress'
 import {
 	fallbackSourceItems,
@@ -208,6 +209,9 @@ export default function Study() {
 	const [wordBankUsed, setWordBankUsed] = useState(false)
 	const [wordBankWords, setWordBankWords] = useState<string[]>([])
 	const [spokenFirst, setSpokenFirst] = useState(false)
+	const [modelIntroduced, setModelIntroduced] = useState(false)
+	const [sentenceRepairAttempt, setSentenceRepairAttempt] = useState(false)
+	const [sentenceRepairCarryMs, setSentenceRepairCarryMs] = useState(0)
 	const [speechLoading, setSpeechLoading] = useState(false)
 	const [speechError, setSpeechError] = useState<string | null>(null)
 	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
@@ -339,6 +343,9 @@ export default function Study() {
 			setPronunciationError(null)
 			setPronunciationLoading(false)
 			setSpokenFirst(false)
+			setModelIntroduced(false)
+			setSentenceRepairAttempt(false)
+			setSentenceRepairCarryMs(0)
 			setSpeechLoading(false)
 			setSpeechError(null)
 			setSourceReflection('')
@@ -397,6 +404,13 @@ export default function Study() {
 			: activeItem
 	const currentSentenceIndex = sentenceActivity?.completedCount ?? 0
 	const current = sentenceQueue[currentSentenceIndex]
+	const practiceCurrent = current
+		? sentenceRepairAttempt || bonusPracticeActive
+			? withMinimumComplexity(current, 3)
+			: current.cueMode === 'model' && modelIntroduced
+			? withMinimumComplexity(current, 2)
+			: current
+		: undefined
 	const currentMistake = repairMistakes[
 		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
 	]
@@ -554,15 +568,19 @@ export default function Study() {
 		() => sourceItems.find(isVideoItem) ?? sourceItems[0] ?? fallbackSourceItems[0],
 		[sourceItems]
 	)
-	const visibleHints = current?.exercise.hints.slice(0, hintsRevealed) ?? []
+	const visibleHints = practiceCurrent?.exercise.hints.slice(0, hintsRevealed) ?? []
 	const learningProfile = useMemo(
 		() => getLearningProfile(targetLevel),
 		[targetLevel]
 	)
 	const sessionPlan = useMemo(() => getSessionPlan(dailyGoal), [dailyGoal])
 	const progress = getDailySessionProgress(sessionItems)
-	const currentPhase = current ? getExercisePhase(current.exercise) : 'warmup'
-	const currentAction = current ? getExerciseAction(current.exercise) : 'Build'
+	const currentPhase = practiceCurrent
+		? getExercisePhase(practiceCurrent.exercise)
+		: 'warmup'
+	const currentAction = practiceCurrent
+		? getExerciseAction(practiceCurrent.exercise)
+		: 'Build'
 	const revisionAdvice = getRevisionAdvice(session?.revisionTags ?? [])
 
 	useEffect(() => {
@@ -578,6 +596,9 @@ export default function Study() {
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
+		setModelIntroduced(false)
+		setSentenceRepairAttempt(false)
+		setSentenceRepairCarryMs(0)
 		setAnswer('')
 		setFeedback(null)
 		setUnitStartedAt(Date.now())
@@ -658,13 +679,13 @@ export default function Study() {
 		candidate: string,
 		voice?: Omit<VoiceRecording, 'audio'>
 	) {
-		if (!current || feedback || !candidate.trim()) return
+		if (!practiceCurrent || feedback || !candidate.trim()) return
 		const msUsed = voice
 			? voice.responseLatencyMs + voice.utteranceDurationMs
 			: Date.now() - unitStartedAt
 		const result = await submitExerciseAnswer({
 			userId,
-			item: current,
+			item: practiceCurrent,
 			answer: candidate.trim(),
 			targetLevel,
 			sessionFocus,
@@ -683,7 +704,7 @@ export default function Study() {
 		setSpokenFirst(Boolean(voice) || spokenFirst)
 		setFeedback({
 			result: result.result,
-			model: current.exercise.targetItalian,
+			model: practiceCurrent.exercise.targetItalian,
 			msUsed,
 			responseLatencyMs: voice?.responseLatencyMs,
 			utteranceDurationMs: voice?.utteranceDurationMs,
@@ -692,7 +713,7 @@ export default function Study() {
 	}
 
 	async function handleSentenceRecording(recording: VoiceRecording) {
-		if (!current || feedback || speechLoading) return
+		if (!practiceCurrent || feedback || speechLoading) return
 		setSpeechLoading(true)
 		setSpeechError(null)
 		try {
@@ -701,14 +722,17 @@ export default function Study() {
 			form.append(
 				'context',
 				[
-					current.exercise.vocabDomain,
-					current.exercise.communicativeFunction,
-					current.exercise.phraseFamily,
+					practiceCurrent.exercise.vocabDomain,
+					practiceCurrent.exercise.communicativeFunction,
+					practiceCurrent.exercise.phraseFamily,
 				]
 					.filter(Boolean)
 					.join(', ')
 			)
-			form.append('skillId', current.skillId ?? current.exercise.id)
+			form.append(
+				'skillId',
+				practiceCurrent.skillId ?? practiceCurrent.exercise.id
+			)
 			form.append('responseLatencyMs', String(recording.responseLatencyMs))
 			form.append('utteranceDurationMs', String(recording.utteranceDurationMs))
 			const response = await apiFetch('/api/transcribe-speech', {
@@ -805,23 +829,39 @@ export default function Study() {
 	}
 
 	async function nextSentence() {
-		if (!feedback || !current) return
+		if (!feedback || !practiceCurrent) return
+		if (!feedback.result.communicative && !sentenceRepairAttempt) {
+			setSentenceRepairCarryMs(feedback.msUsed)
+			setSentenceRepairAttempt(true)
+			setAnswer('')
+			setHintsRevealed(0)
+			setWordBankVisible(false)
+			setWordBankUsed(false)
+			setSpokenFirst(false)
+			setSpeechError(null)
+			setFeedback(null)
+			setUnitStartedAt(Date.now())
+			return
+		}
 		const nextCompletedCount = (sentenceActivity?.completedCount ?? 0) + 1
 		await recordUnit(sentenceActivity ?? null, {
-			activeMs: feedback.msUsed,
+			activeMs: feedback.msUsed + sentenceRepairCarryMs,
 			success: feedback.result.communicative,
 			mistake: !feedback.result.accepted,
 			tags: feedback.result.errorTags.length
 				? feedback.result.errorTags
 				: feedback.result.accepted
 				? []
-				: current.exercise.tags,
+				: practiceCurrent.exercise.tags,
 		})
 		setAnswer('')
 		setHintsRevealed(0)
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
+		setModelIntroduced(false)
+		setSentenceRepairAttempt(false)
+		setSentenceRepairCarryMs(0)
 		setSpeechError(null)
 		setFeedback(null)
 		if (bonusPracticeActive || nextCompletedCount >= sentenceQueue.length - 3) {
@@ -1010,9 +1050,9 @@ export default function Study() {
 	}
 
 	function revealHint() {
-		if (!current) return
+		if (!practiceCurrent) return
 		setHintsRevealed((value) =>
-			Math.min(value + 1, current.exercise.hints.length)
+			Math.min(value + 1, practiceCurrent.exercise.hints.length)
 		)
 	}
 
@@ -1027,8 +1067,20 @@ export default function Study() {
 	}
 
 	function hearModel() {
-		if (!current || !canTTS()) return
-		speak(current.exercise.targetItalian, 'it-IT')
+		if (!practiceCurrent || !canTTS()) return
+		speak(practiceCurrent.exercise.targetItalian, 'it-IT')
+	}
+
+	function completeModelIntroduction() {
+		if (!current || current.cueMode !== 'model') return
+		setModelIntroduced(true)
+		setAnswer('')
+		setHintsRevealed(0)
+		setWordBankVisible(false)
+		setWordBankUsed(false)
+		setSpokenFirst(false)
+		setSpeechError(null)
+		setUnitStartedAt(Date.now())
 	}
 
 	function continueBonusPractice() {
@@ -1039,6 +1091,9 @@ export default function Study() {
 		setWordBankVisible(false)
 		setWordBankUsed(false)
 		setSpokenFirst(false)
+		setModelIntroduced(false)
+		setSentenceRepairAttempt(false)
+		setSentenceRepairCarryMs(0)
 		setUnitStartedAt(Date.now())
 		void appendFreshBonusSentences(sentenceActivity?.completedCount ?? 0)
 	}
@@ -1199,14 +1254,15 @@ export default function Study() {
 						/>
 					)}
 
-					{activeSessionItem?.type === 'sentence' && current && (
+					{activeSessionItem?.type === 'sentence' && practiceCurrent && (
 						<SentenceBuilder
 							answer={answer}
-							current={current}
+							current={practiceCurrent}
 							currentAction={currentAction}
 							currentPhase={currentPhase}
 							feedback={feedback}
 							hintsRevealed={hintsRevealed}
+							isRepairAttempt={sentenceRepairAttempt}
 							promptStartedAt={unitStartedAt}
 							speechError={speechError}
 							speechLoading={speechLoading}
@@ -1215,6 +1271,7 @@ export default function Study() {
 							wordBankWords={wordBankWords}
 							onAddWord={addWord}
 							onAnswer={setAnswer}
+							onCompleteModel={completeModelIntroduction}
 							onHearModel={hearModel}
 							onNext={nextSentence}
 							onRevealHint={revealHint}
@@ -1224,7 +1281,7 @@ export default function Study() {
 						/>
 					)}
 
-					{activeSessionItem?.type === 'sentence' && !current && (
+					{activeSessionItem?.type === 'sentence' && !practiceCurrent && (
 						<div className="sentence-queue-pause" role="status">
 							<Loader2
 								className={sentenceRefreshLoading ? 'spin' : undefined}
@@ -1572,6 +1629,7 @@ function SentenceBuilder({
 	currentPhase,
 	feedback,
 	hintsRevealed,
+	isRepairAttempt,
 	promptStartedAt,
 	speechError,
 	speechLoading,
@@ -1580,6 +1638,7 @@ function SentenceBuilder({
 	wordBankWords,
 	onAddWord,
 	onAnswer,
+	onCompleteModel,
 	onHearModel,
 	onNext,
 	onRecording,
@@ -1593,6 +1652,7 @@ function SentenceBuilder({
 	currentPhase: string
 	feedback: FeedbackState | null
 	hintsRevealed: number
+	isRepairAttempt: boolean
 	promptStartedAt: number
 	speechError: string | null
 	speechLoading: boolean
@@ -1601,6 +1661,7 @@ function SentenceBuilder({
 	wordBankWords: string[]
 	onAddWord: (word: string) => void
 	onAnswer: (answer: string) => void
+	onCompleteModel: () => void
 	onHearModel: () => void
 	onNext: () => void
 	onRecording: (recording: VoiceRecording) => void
@@ -1615,7 +1676,7 @@ function SentenceBuilder({
 	const cue =
 		cueMode === 'model'
 			? {
-					label: 'Copy this useful pattern aloud',
+					label: 'Meet this useful pattern',
 					prompt: current.exercise.targetItalian,
 					className: 'prompt prompt-italian',
 			  }
@@ -1627,7 +1688,11 @@ function SentenceBuilder({
 			  }
 			: cueMode === 'english'
 			? {
-					label: 'Say this in Italian',
+					label: isRepairAttempt
+						? 'Repair it from memory'
+						: complexityStep === 2
+						? 'Rebuild this useful pattern'
+						: 'Say this in Italian',
 					prompt: current.exercise.promptEnglish,
 					className: 'prompt',
 			  }
@@ -1638,6 +1703,14 @@ function SentenceBuilder({
 						: current.exercise.promptEnglish,
 					className: 'prompt prompt-situation',
 			  }
+	const retrievalInstruction =
+		complexityStep === 2
+			? 'Recall the complete sentence before opening a hint.'
+			: complexityStep === 3
+			? 'Reuse the pattern with this changed detail.'
+			: complexityStep === 4
+			? 'Give the first short answer that fits the situation.'
+			: 'Respond naturally and keep the exchange moving.'
 	const frameMeta = [
 		`Step ${complexityStep} of 5`,
 		`${current.exercise.cefrLevel ?? current.levelBand ?? 'target'} ${
@@ -1650,6 +1723,7 @@ function SentenceBuilder({
 		current.exercise.communicativeFunction,
 		current.exercise.tenseFocus,
 		current.exercise.vocabDomain,
+		isRepairAttempt ? 'immediate repair' : null,
 	]
 		.filter(Boolean)
 		.map((value) => value!.replace(/-/g, ' '))
@@ -1677,22 +1751,51 @@ function SentenceBuilder({
 				))}
 			</div>
 
-			{hasConversationCue && cueMode !== 'model' && (
-				<div className="npc-line">
-					<span>Italian speaker</span>
-					<p>{current.exercise.npcLine}</p>
-				</div>
-			)}
-
-			<form className="answer-card" onSubmit={onSubmit}>
-				<label htmlFor="answer">{cue.label}</label>
-				<p className={cue.className}>{cue.prompt}</p>
-				{cueMode === 'model' && (
+			{cueMode === 'model' && (
+				<div className="answer-card pattern-introduction">
+					<label>Listen, understand, echo</label>
+					<p className="prompt prompt-italian">{current.exercise.targetItalian}</p>
 					<div className="prompt-meaning">
 						<span>Meaning</span>
 						<p>{current.exercise.promptEnglish}</p>
 					</div>
-				)}
+					<div
+						className="complexity-stair"
+						aria-label="Pattern introduction, before scored retrieval">
+						{[1, 2, 3, 4, 5].map((step) => (
+							<span className={step === 1 ? 'active' : ''} key={step} />
+						))}
+					</div>
+					<p className="model-instruction">
+						Hear it once, say it once, then hide the Italian and rebuild it.
+					</p>
+					<div className="model-echo-actions">
+						{canTTS() && (
+							<button className="btn btn-secondary" type="button" onClick={onHearModel}>
+								<Volume2 size={18} />
+								Hear Italian
+							</button>
+						)}
+						<button className="btn btn-primary" type="button" onClick={onCompleteModel}>
+							<ArrowRight size={18} />
+							I said it - test me
+						</button>
+					</div>
+				</div>
+			)}
+
+			{cueMode !== 'model' && (
+				<>
+					{hasConversationCue && (
+						<div className="npc-line">
+							<span>Italian speaker</span>
+							<p>{current.exercise.npcLine}</p>
+						</div>
+					)}
+
+			<form className="answer-card" onSubmit={onSubmit}>
+				<label htmlFor="answer">{cue.label}</label>
+				<p className={cue.className}>{cue.prompt}</p>
 				<div className="complexity-stair" aria-label={`Complexity step ${complexityStep} of 5`}>
 					{[1, 2, 3, 4, 5].map((step) => (
 						<span className={step <= complexityStep ? 'active' : ''} key={step} />
@@ -1701,7 +1804,7 @@ function SentenceBuilder({
 				<div className="speak-gate">
 					<div>
 						<span><Mic2 size={16} />Answer aloud first</span>
-						<p>{current.exercise.spokenCue ?? 'Say the first usable answer that comes to mind.'}</p>
+						<p>{retrievalInstruction}</p>
 					</div>
 					<SentenceVoiceRecorder
 						busy={speechLoading}
@@ -1811,7 +1914,9 @@ function SentenceBuilder({
 					{feedback ? (
 						<button className="btn btn-primary" type="button" onClick={onNext}>
 							<ArrowRight size={18} />
-							Next
+							{!feedback.result.communicative && !isRepairAttempt
+								? 'Repair from memory'
+								: 'Next'}
 						</button>
 					) : (
 						<button className="btn btn-primary" type="submit">
@@ -1821,6 +1926,8 @@ function SentenceBuilder({
 					)}
 				</div>
 			</form>
+				</>
+			)}
 		</>
 	)
 }

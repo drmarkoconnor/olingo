@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Exercise } from '@/learning/content'
 import {
 	complexityPlan,
+	cueModeForStep,
 	deriveSkillId,
 	effectiveProgramWeek,
 	exerciseMatchesSessionIntent,
@@ -73,8 +74,10 @@ describe('session intent and complexity', () => {
 
 	it('fades support progressively without requiring longer sentences', () => {
 		expect(complexityPlan(10, 'comfortable')).toEqual([
-			1, 1, 2, 2, 3, 3, 3, 4, 4, 5,
+			1, 2, 2, 3, 3, 4, 4, 5, 5, 5,
 		])
-		expect(complexityPlan(5, 'intensive')).toEqual([2, 3, 4, 5, 5])
+		expect(complexityPlan(5, 'intensive')).toEqual([4, 4, 5, 5, 5])
+		expect(cueModeForStep(1)).toBe('model')
+		expect(cueModeForStep(2)).toBe('english')
 	})
 })

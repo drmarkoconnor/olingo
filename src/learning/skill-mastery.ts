@@ -116,6 +116,8 @@ export async function recordSkillAttempt(input: SkillAttemptInput) {
 	const existing =
 		(await db.skillStates.get([input.userId, skillId])) ??
 		createSkillState(input.userId, input.exercise, input.targetLevel, input.focus)
+	// A visible model is an introduction, not evidence that the learner can retrieve it.
+	if (input.cueMode === 'model') return existing
 	const now = new Date()
 	const nowIso = now.toISOString()
 	const responseLatencyMs = Math.max(0, Math.round(input.responseLatencyMs || 0))

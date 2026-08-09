@@ -457,6 +457,21 @@ function orderPatternedVariety(
 	return ordered
 }
 
+export function withMinimumComplexity(
+	item: SprintItem,
+	minimumStep: ComplexityStep
+) {
+	const complexityStep = Math.max(
+		minimumStep,
+		item.complexityStep ?? 1
+	) as ComplexityStep
+	return {
+		...item,
+		complexityStep,
+		cueMode: cueModeForStep(complexityStep),
+	}
+}
+
 function applyComplexityLadder(
 	items: SprintItem[],
 	challengeMode: ChallengeMode,
@@ -468,15 +483,13 @@ function applyComplexityLadder(
 		const state = states.get(skillId)
 		const variationIndex = skillIndexes.get(skillId) ?? 0
 		skillIndexes.set(skillId, variationIndex + 1)
-		const startingStep = state
+		const masteryStep = state
 			? Math.min(5, Math.max(1, state.masteryStage + 1))
 			: 1
-		const stepGain =
-			challengeMode === 'comfortable'
-				? Math.floor(variationIndex / 2)
-				: challengeMode === 'intensive'
-				? variationIndex + 1
-				: variationIndex
+		const challengeFloor =
+			challengeMode === 'intensive' ? 4 : challengeMode === 'stretch' ? 2 : 1
+		const startingStep = Math.max(masteryStep, challengeFloor)
+		const stepGain = variationIndex
 		const complexityStep = item.sourceMistakeId
 			? (3 as const)
 			: (Math.min(5, startingStep + stepGain) as ComplexityStep)

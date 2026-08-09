@@ -1004,6 +1004,26 @@ input[type='number']:focus {
 	font-weight: 750;
 }
 
+.pattern-introduction {
+	border-color: #b9e7ca;
+	background: #fbfffd;
+}
+
+.model-instruction {
+	margin: 0;
+	color: var(--muted);
+	font-weight: 750;
+	line-height: 1.4;
+}
+
+.model-echo-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
 .prompt-situation {
 	font-size: 22px;
 }

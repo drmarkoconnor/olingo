@@ -79,11 +79,34 @@ describe('speaking skill mastery', () => {
 		const attempts = await db.skillAttempts.where('userId').equals(userId).toArray()
 		expect(states).toHaveLength(1)
 		expect(states[0].skillId).toBe(deriveSkillId(exercises[0]))
-		expect(states[0].attempts).toBe(4)
+		expect(states[0].attempts).toBe(3)
 		expect(states[0].unassistedSuccesses).toBe(3)
 		expect(states[0].fastSpokenSuccesses).toBe(3)
 		expect(states[0].masteryStage).toBe(4)
-		expect(attempts).toHaveLength(4)
+		expect(attempts).toHaveLength(3)
+	})
+
+	it('does not treat a visible model as a retrieval or mastery attempt', async () => {
+		const exercise = variation('model-only', 'dinner')
+		const returned = await recordSkillAttempt({
+			userId,
+			exercise,
+			targetLevel: 'A2',
+			focus: 'modal-verbs',
+			domain: 'family',
+			complexityStep: 1,
+			cueMode: 'model',
+			communicative: true,
+			accepted: true,
+			hintsUsed: 0,
+			wordBankUsed: false,
+			spoken: true,
+			responseLatencyMs: 2_000,
+		})
+
+		expect(returned.masteryStage).toBe(0)
+		expect(await db.skillStates.count()).toBe(0)
+		expect(await db.skillAttempts.count()).toBe(0)
 	})
 
 	it('does not label typed success as fast spoken mastery', async () => {

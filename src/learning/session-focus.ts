@@ -177,17 +177,17 @@ export const challengeModes: Array<{
 	{
 		id: 'comfortable',
 		label: 'Steady',
-		description: 'More modelling and anchors before the Italian-only turns.',
+		description: 'Meet each new pattern once, then rebuild it with fading support.',
 	},
 	{
 		id: 'stretch',
 		label: 'Stretch',
-		description: 'A balanced climb from support to spontaneous replies.',
+		description: 'Start from the meaning and climb toward spontaneous replies.',
 	},
 	{
 		id: 'intensive',
 		label: 'Intensive',
-		description: 'Less English, faster cue fading, and more transfer turns.',
+		description: 'Start from situations, with more conversational transfer turns.',
 	},
 ]
 
@@ -272,7 +272,7 @@ export function skillLabel(exercise: Exercise) {
 
 export function cueModeForStep(step: ComplexityStep): CueMode {
 	if (step === 1) return 'model'
-	if (step === 2) return 'anchor'
+	if (step === 2) return 'english'
 	if (step === 3) return 'english'
 	if (step === 4) return 'situation'
 	return 'interaction'
@@ -280,9 +280,9 @@ export function cueModeForStep(step: ComplexityStep): CueMode {
 
 export function complexityPlan(count: number, challenge: ChallengeMode) {
 	const plans: Record<ChallengeMode, ComplexityStep[]> = {
-		comfortable: [1, 1, 2, 2, 3, 3, 3, 4, 4, 5],
-		stretch: [1, 2, 2, 3, 3, 4, 4, 4, 5, 5],
-		intensive: [2, 2, 3, 3, 4, 4, 5, 5, 5, 5],
+		comfortable: [1, 2, 2, 3, 3, 4, 4, 5, 5, 5],
+		stretch: [2, 2, 3, 3, 4, 4, 4, 5, 5, 5],
+		intensive: [4, 4, 4, 5, 5, 5, 5, 5, 5, 5],
 	}
 	const plan = plans[challenge]
 	return Array.from({ length: Math.max(0, count) }, (_, index) => {

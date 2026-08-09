@@ -10,6 +10,7 @@ import {
 	ensureExerciseStates,
 	loadDailySprint,
 	submitMistakeRepair,
+	withMinimumComplexity,
 } from '@/learning/progress'
 import { db, type MistakeItem } from '@/storage/db'
 
@@ -89,6 +90,44 @@ describe('daily sprint composition', () => {
 		expect(
 			queue.some((item) => item.exercise.communicativeFunction === 'repair')
 		).toBe(true)
+	})
+
+	it('models a frame at most once and raises challenge without showing the answer', async () => {
+		const steady = await loadDailySprint(userId, 20, {
+			targetLevel: 'A2',
+			programWeek: 5,
+			challengeMode: 'comfortable',
+			generateFresh: false,
+		})
+		const modelCounts = new Map<string, number>()
+		for (const item of steady.filter((entry) => entry.cueMode === 'model')) {
+			const skillId = item.skillId ?? item.exercise.id
+			modelCounts.set(skillId, (modelCounts.get(skillId) ?? 0) + 1)
+		}
+		expect([...modelCounts.values()].every((count) => count === 1)).toBe(true)
+
+		const stretch = await loadDailySprint(userId, 20, {
+			targetLevel: 'A2',
+			programWeek: 5,
+			challengeMode: 'stretch',
+			generateFresh: false,
+		})
+		expect(stretch.every((item) => (item.complexityStep ?? 1) >= 2)).toBe(true)
+		expect(stretch.every((item) => item.cueMode !== 'model')).toBe(true)
+
+		const intensive = await loadDailySprint(userId, 20, {
+			targetLevel: 'A2',
+			programWeek: 5,
+			challengeMode: 'intensive',
+			generateFresh: false,
+		})
+		expect(intensive.every((item) => (item.complexityStep ?? 1) >= 4)).toBe(true)
+
+		const model = steady.find((item) => item.cueMode === 'model')
+		expect(model).toBeDefined()
+		const bonus = withMinimumComplexity(model!, 3)
+		expect(bonus.complexityStep).toBe(3)
+		expect(bonus.cueMode).toBe('english')
 	})
 
 	it('pulls open mistakes into the sprint as repair work', async () => {
