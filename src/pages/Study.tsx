@@ -1687,6 +1687,12 @@ function SentenceBuilder({
 			<form className="answer-card" onSubmit={onSubmit}>
 				<label htmlFor="answer">{cue.label}</label>
 				<p className={cue.className}>{cue.prompt}</p>
+				{cueMode === 'model' && (
+					<div className="prompt-meaning">
+						<span>Meaning</span>
+						<p>{current.exercise.promptEnglish}</p>
+					</div>
+				)}
 				<div className="complexity-stair" aria-label={`Complexity step ${complexityStep} of 5`}>
 					{[1, 2, 3, 4, 5].map((step) => (
 						<span className={step <= complexityStep ? 'active' : ''} key={step} />
@@ -1750,7 +1756,12 @@ function SentenceBuilder({
 						}>
 						<strong>{feedback.result.message}</strong>
 						<span className="feedback-note">{feedback.result.shortFeedback}</span>
-						<p>{feedback.model}</p>
+						<div className="feedback-model">
+							<p>{feedback.model}</p>
+							<span>
+								<b>Meaning:</b> {current.exercise.promptEnglish}
+							</span>
+						</div>
 						{feedback.spoken && (
 							<span className="voice-result">
 								Spoken answer started in {formatDuration(feedback.responseLatencyMs ?? 0)}
