@@ -29,12 +29,14 @@ type ReaderPayload = {
 	title: string
 	sourceName: string
 	sourceUrl: string
+	publishedAt?: string
 	level: string
 	topic: string
 	paragraphs: ReaderParagraph[]
 	glossary: Array<{ italian: string; english: string }>
 	discussionPrompt: string
 	provider: 'openai' | 'fallback'
+	sourceMaterial: 'article' | 'metadata'
 	createdAt: string
 }
 
@@ -52,6 +54,8 @@ const readerSchema = {
 	properties: {
 		paragraphs: {
 			type: 'array',
+			minItems: 3,
+			maxItems: 5,
 			items: {
 				type: 'object',
 				additionalProperties: false,
@@ -93,7 +97,143 @@ function clean(value: unknown, fallback = '') {
 
 function cacheKey(sourceItem: SourceItem, level: string) {
 	const id = clean(sourceItem.id, clean(sourceItem.link, clean(sourceItem.title, 'source')))
-	return `readers-v2/${encodeURIComponent(level)}/${encodeURIComponent(id)}`
+	const edition = clean(sourceItem.publishedAt, 'undated')
+	return `readers-v3/${encodeURIComponent(level)}/${encodeURIComponent(
+		`${id}-${edition}`
+	)}`
+}
+
+const permittedArticleHosts = ['ansa.it', 'rainews.it']
+
+function decodeHtml(value: string) {
+	return value
+		.replace(/&nbsp;/gi, ' ')
+		.replace(/&amp;/gi, '&')
+		.replace(/&quot;/gi, '"')
+		.replace(/&#39;|&apos;/gi, "'")
+		.replace(/&lt;/gi, '<')
+		.replace(/&gt;/gi, '>')
+		.replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+}
+
+function articlePlainText(value: string) {
+	return decodeHtml(value)
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim()
+}
+
+function collectJsonLdArticleText(value: unknown, bodies: string[], descriptions: string[]) {
+	if (Array.isArray(value)) {
+		value.forEach((item) => collectJsonLdArticleText(item, bodies, descriptions))
+		return
+	}
+	if (!value || typeof value !== 'object') return
+	const record = value as Record<string, unknown>
+	if (typeof record.articleBody === 'string') bodies.push(record.articleBody)
+	if (typeof record.body === 'string') bodies.push(record.body)
+	if (typeof record.content === 'string') bodies.push(record.content)
+	if (typeof record.description === 'string') descriptions.push(record.description)
+	Object.values(record).forEach((item) => {
+		if (item && typeof item === 'object') {
+			collectJsonLdArticleText(item, bodies, descriptions)
+		}
+	})
+}
+
+function bestArticleText(bodies: string[], descriptions: string[]) {
+	return (bodies.length ? bodies : descriptions)
+		.map(articlePlainText)
+		.filter((value, index, all) => value.length >= 80 && all.indexOf(value) === index)
+		.join('\n\n')
+		.slice(0, 7_500)
+}
+
+export function extractArticleJson(value: unknown) {
+	const bodies: string[] = []
+	const descriptions: string[] = []
+	collectJsonLdArticleText(value, bodies, descriptions)
+	return bestArticleText(bodies, descriptions)
+}
+
+function attribute(tag: string, name: string) {
+	const quoted = tag.match(new RegExp(`\\b${name}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, 'i'))
+	if (quoted) return quoted[2]
+	return tag.match(new RegExp(`\\b${name}\\s*=\\s*([^\\s>]+)`, 'i'))?.[1] ?? ''
+}
+
+export function extractArticleText(html: string) {
+	const bodies: string[] = []
+	const descriptions: string[] = []
+	const scripts = html.match(
+		/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi
+	) ?? []
+
+	for (const script of scripts) {
+		const raw = script
+			.replace(/^<script\b[^>]*>/i, '')
+			.replace(/<\/script>$/i, '')
+			.trim()
+		try {
+			collectJsonLdArticleText(JSON.parse(raw), bodies, descriptions)
+		} catch {}
+	}
+
+	if (!bodies.length) {
+		const metaTags = html.match(/<meta\b[^>]*>/gi) ?? []
+		for (const tag of metaTags) {
+			const property = attribute(tag, 'property') || attribute(tag, 'name')
+			if (!['og:description', 'description'].includes(property.toLowerCase())) continue
+			const content = attribute(tag, 'content')
+			if (content) descriptions.push(content)
+		}
+	}
+
+	return bestArticleText(bodies, descriptions)
+}
+
+async function fetchArticleText(sourceItem: SourceItem) {
+	const rawUrl = clean(sourceItem.link)
+	if (!rawUrl) return ''
+	let url: URL
+	try {
+		url = new URL(rawUrl)
+	} catch {
+		return ''
+	}
+	if (url.protocol !== 'https:') return ''
+	if (
+		!permittedArticleHosts.some(
+			(host) => url.hostname === host || url.hostname.endsWith(`.${host}`)
+		)
+	) {
+		return ''
+	}
+
+	try {
+		const response = await fetch(url, {
+			headers: {
+				Accept: 'text/html,application/xhtml+xml',
+				'User-Agent': 'Olingo language reader/1.0',
+			},
+			signal: AbortSignal.timeout(8_000),
+		})
+		if (!response.ok) return ''
+		const contentType = response.headers.get('content-type') ?? ''
+		if (contentType.includes('json')) {
+			try {
+				return extractArticleJson(await response.json())
+			} catch {
+				return ''
+			}
+		}
+		if (contentType.includes('text/html') || contentType.includes('application/xhtml+xml')) {
+			return extractArticleText(await response.text())
+		}
+		return ''
+	} catch {
+		return ''
+	}
 }
 
 function fallbackReader(sourceItem: SourceItem, level: string) {
@@ -130,7 +270,7 @@ function fallbackReader(sourceItem: SourceItem, level: string) {
 	} satisfies Pick<ReaderPayload, 'paragraphs' | 'glossary' | 'discussionPrompt'>
 }
 
-async function generateReader(sourceItem: SourceItem, level: string) {
+async function generateReader(sourceItem: SourceItem, level: string, articleText: string) {
 	const apiKey = getEnv('OPENAI_API_KEY')
 	if (!apiKey) return null
 
@@ -147,7 +287,7 @@ async function generateReader(sourceItem: SourceItem, level: string) {
 				{
 					role: 'system',
 					content:
-						'Create a short Italian learner reading from news metadata. Do not reproduce a full copyrighted article. Use simple, original prose based on the title and summary, with side-by-side English meaning. Return only schema-valid JSON.',
+						'Create a concise Italian learner newspaper adaptation. Preserve facts from the supplied source, but do not reproduce the article or imitate its wording. Write original, level-controlled prose. Pair every Italian paragraph with an accurate English translation. Return only schema-valid JSON.',
 				},
 				{
 					role: 'user',
@@ -156,10 +296,13 @@ async function generateReader(sourceItem: SourceItem, level: string) {
 						levelGuidance:
 							levelGuidance[level as NonNullable<Body['level']>] ?? levelGuidance.B1,
 						source: sourceItem,
+						articleExtract: articleText || undefined,
 						requirements: [
-							'Write 3 short paragraphs at the requested level.',
+							'Write 3-5 short newspaper paragraphs at the requested level.',
 							'Each Italian paragraph must have a clear English translation.',
-							'Use original learner prose derived from metadata, not copied article text.',
+							'Use the article extract when supplied so names, places, dates, numbers, and claims remain accurate.',
+							'Do not invent a detail that is absent from the source material.',
+							'Use original learner prose, never copied article sentences.',
 							'Keep vocabulary, grammar, and sentence shape suitable for the requested level.',
 							'At B2 and C1 increase precision, not obscurity or sentence length.',
 							'Include 4-6 useful glossary items.',
@@ -208,17 +351,20 @@ export default async (req: Request) => {
 	const cached = (await store.get(key, { type: 'json' })) as ReaderPayload | null
 	if (cached) return json({ ...cached, cached: true })
 
-	const generated = await generateReader(body.sourceItem, level)
+	const articleText = await fetchArticleText(body.sourceItem)
+	const generated = await generateReader(body.sourceItem, level, articleText)
 	const reader = generated ?? fallbackReader(body.sourceItem, level)
 	const payload: ReaderPayload = {
 		id: key,
 		title: clean(body.sourceItem.title, 'Italian source'),
 		sourceName: clean(body.sourceItem.sourceName, 'Italian source'),
 		sourceUrl: clean(body.sourceItem.link, '#'),
+		publishedAt: clean(body.sourceItem.publishedAt) || undefined,
 		level,
 		topic: clean(body.sourceItem.topic, 'news'),
 		...reader,
 		provider: generated ? 'openai' : 'fallback',
+		sourceMaterial: articleText ? 'article' : 'metadata',
 		createdAt: new Date().toISOString(),
 	}
 

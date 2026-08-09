@@ -18,6 +18,10 @@ export type SourceItem = {
 	embedUrl?: string
 	publishedAt?: string
 	prompt: string
+	format?: 'guided lesson' | 'subtitled conversation' | 'animated lesson' | 'culture'
+	captioned?: boolean
+	searchLabel?: string
+	fresh?: boolean
 }
 
 export const italianSources: ItalianSource[] = [
@@ -59,7 +63,8 @@ export const italianSources: ItalianSource[] = [
 		type: 'video',
 		topic: 'video',
 		url: 'https://www.youtube.com/results?search_query=italiano+vita+quotidiana+cultura',
-		notes: 'Live video prompts rotate across everyday Italian themes when the server key is configured.',
+		notes:
+			'Fresh teaching videos and captioned conversations, selected around practical Italian.',
 	},
 ]
 

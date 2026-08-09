@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
 	CalendarDays,
+	Captions,
+	Eye,
+	EyeOff,
 	ExternalLink,
-	Languages,
 	Newspaper,
 	Play,
 	RefreshCw,
@@ -28,8 +30,11 @@ type SourceDiagnostics = {
 		query?: {
 			id: string
 			label: string
-			q: string
+			q?: string
 		}
+		freshCount?: number
+		seenCount?: number
+		batchesShown?: number
 	}
 	rss?: {
 		count: number
@@ -53,15 +58,18 @@ type GeneratedPack = {
 }
 
 type SourceReader = {
+	id: string
 	title: string
 	sourceName: string
 	sourceUrl: string
+	publishedAt?: string
 	level: string
 	topic: string
 	paragraphs: Array<{ italian: string; english: string }>
 	glossary: Array<{ italian: string; english: string }>
 	discussionPrompt: string
 	provider: 'openai' | 'fallback'
+	sourceMaterial?: 'article' | 'metadata'
 	cached?: boolean
 }
 
@@ -77,7 +85,11 @@ export default function Sources() {
 	const [reader, setReader] = useState<SourceReader | null>(null)
 	const [readerLoading, setReaderLoading] = useState(false)
 	const [readerError, setReaderError] = useState<string | null>(null)
+	const [revealedParagraphs, setRevealedParagraphs] = useState<Set<number>>(
+		new Set()
+	)
 	const readerRequestId = useRef(0)
+	const readerSectionRef = useRef<HTMLDivElement>(null)
 	const videoItems = items.filter(isVideoItem)
 	const articleItems = items.filter((item) => !isVideoItem(item))
 	const sourcesUnlocked = sourceContentUnlocked(programWeek)
@@ -88,12 +100,15 @@ export default function Sources() {
 		setReader(null)
 		setReaderLoading(false)
 		setReaderError(null)
+		setRevealedParagraphs(new Set())
 	}
 
-	async function loadSources() {
+	async function loadSources(fresh = false) {
 		setLoading(true)
 		try {
-			const response = await apiFetch('/api/italian-sources')
+			const params = new URLSearchParams({ level: targetLevel })
+			if (fresh) params.set('fresh', '1')
+			const response = await apiFetch(`/api/italian-sources?${params.toString()}`)
 			if (!response.ok) throw new Error('source unavailable')
 			const data = (await response.json()) as {
 				items: SourceItem[]
@@ -114,16 +129,23 @@ export default function Sources() {
 	}
 
 	useEffect(() => {
-		loadSources()
+		void loadSources()
 	}, [])
+
+	useEffect(() => {
+		if (!readerLoading && !reader && !readerError) return
+		readerSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+	}, [readerLoading, reader, readerError])
 
 	async function openReader(item = activePrompt) {
 		if (isVideoItem(item)) return
 		const requestId = readerRequestId.current + 1
 		readerRequestId.current = requestId
 		setActivePrompt(item)
+		setReader(null)
 		setReaderLoading(true)
 		setReaderError(null)
+		setRevealedParagraphs(new Set())
 		try {
 			const response = await apiFetch('/api/source-reader', {
 				method: 'POST',
@@ -148,8 +170,11 @@ export default function Sources() {
 					data?.message ?? data?.error ?? `Reader unavailable (${response.status})`
 				)
 			}
+			if (!isSourceReader(data)) {
+				throw new Error(data?.error ?? 'The newspaper response was incomplete.')
+			}
 			if (readerRequestId.current !== requestId) return
-			setReader(data as SourceReader)
+			setReader(data)
 		} catch (error) {
 			if (readerRequestId.current !== requestId) return
 			setReader(null)
@@ -263,13 +288,17 @@ export default function Sources() {
 								type="button"
 								disabled={readerLoading}
 								onClick={() => openReader(activePrompt)}>
-								<Languages size={18} />
-								{readerLoading ? 'Preparing' : 'Read in app'}
+								<Newspaper size={18} />
+								{readerLoading ? 'Preparing' : 'Open newspaper'}
 							</button>
 						)}
-						<button className="btn btn-secondary" type="button" onClick={loadSources}>
+						<button
+							className="btn btn-secondary"
+							type="button"
+							disabled={loading}
+							onClick={() => loadSources(true)}>
 							<RefreshCw size={18} />
-							{loading ? 'Loading' : 'Refresh'}
+							{loading ? 'Finding clips' : 'New selection'}
 						</button>
 						<button
 							className="btn btn-secondary"
@@ -294,66 +323,38 @@ export default function Sources() {
 			</section>
 
 			{(reader || readerLoading || readerError) && (
-				<section className="source-panel reader-panel">
-					<div className="source-panel-header">
-						<div>
-							<p className="eyebrow">{reader?.sourceName ?? activePrompt.sourceName}</p>
-							<h2>{reader?.title ?? 'Preparing reader'}</h2>
-						</div>
-						{reader && (
-							<a href={reader.sourceUrl} target="_blank" rel="noreferrer">
-								<ExternalLink size={16} />
-								Original
-							</a>
-						)}
-					</div>
+				<div className="reader-surface-anchor" ref={readerSectionRef}>
 					{readerLoading && (
-						<div className="source-empty">
-							<RefreshCw className="spin" size={22} />
-							<p>Preparing a simple reading version...</p>
-						</div>
+						<section className="source-panel reader-panel">
+							<div className="source-empty">
+								<RefreshCw className="spin" size={22} />
+								<p>Setting today&apos;s learner edition...</p>
+							</div>
+						</section>
 					)}
 					{readerError && (
-						<div className="feedback feedback-repair">
-							<strong>Reader unavailable</strong>
-							<span className="feedback-note">{readerError}</span>
-						</div>
+						<section className="source-panel reader-panel">
+							<div className="feedback feedback-repair">
+								<strong>Reader unavailable</strong>
+								<span className="feedback-note">{readerError}</span>
+							</div>
+						</section>
 					)}
 					{reader && (
-						<>
-							<div className="reader-grid">
-								<div className="reader-column">
-									<span>Simple Italian</span>
-									{reader.paragraphs.map((paragraph, index) => (
-										<p key={`it-${index}`}>{paragraph.italian}</p>
-									))}
-								</div>
-								<div className="reader-column">
-									<span>English meaning</span>
-									{reader.paragraphs.map((paragraph, index) => (
-										<p key={`en-${index}`}>{paragraph.english}</p>
-									))}
-								</div>
-							</div>
-							<div className="reader-tools">
-								<div>
-									<strong>Useful words</strong>
-									<div className="tag-row">
-										{reader.glossary.map((item) => (
-											<span key={`${item.italian}-${item.english}`}>
-												{item.italian} = {item.english}
-											</span>
-										))}
-									</div>
-								</div>
-								<div>
-									<strong>Say this next</strong>
-									<p>{reader.discussionPrompt}</p>
-								</div>
-							</div>
-						</>
+						<NewspaperReader
+							reader={reader}
+							revealedParagraphs={revealedParagraphs}
+							onToggleParagraph={(index) =>
+								setRevealedParagraphs((current) => {
+									const next = new Set(current)
+									if (next.has(index)) next.delete(index)
+									else next.add(index)
+									return next
+								})
+							}
+						/>
 					)}
-				</section>
+				</div>
 			)}
 
 			{generatedPack && (
@@ -412,8 +413,20 @@ export default function Sources() {
 									/>
 								</div>
 								<div className="source-card-body">
-									<span>{item.sourceName}</span>
+									<div className="source-video-meta">
+										<span>{item.sourceName}</span>
+										<div>
+											{item.fresh && <small>New to you</small>}
+											{item.captioned && (
+												<small>
+													<Captions size={14} />
+													Captions
+												</small>
+											)}
+										</div>
+									</div>
 									<strong>{item.title}</strong>
+									{item.format && <em>{item.format}</em>}
 									<p>{item.summary}</p>
 									<div className="source-card-actions">
 										<button
@@ -443,8 +456,8 @@ export default function Sources() {
 			<section className="source-panel">
 				<div className="source-panel-header">
 					<div>
-						<p className="eyebrow">Newspaper prompts</p>
-						<h2>Today in Italian</h2>
+						<p className="eyebrow">Il Tempo degli O&apos;Connor</p>
+						<h2>Choose the front page</h2>
 					</div>
 					<span>{articleItems.length} articles loaded</span>
 				</div>
@@ -472,12 +485,12 @@ export default function Sources() {
 									className="btn btn-secondary"
 									type="button"
 									onClick={() => selectPrompt(item)}>
-									<Newspaper size={17} />
-									Use article
+									<Play size={17} />
+									Use for drills
 								</button>
 								<button type="button" onClick={() => openReader(item)}>
-									<Languages size={16} />
-									Read in app
+									<Newspaper size={16} />
+									Open edition
 								</button>
 								<a href={item.link} target="_blank" rel="noreferrer">
 									<ExternalLink size={16} />
@@ -513,6 +526,104 @@ export default function Sources() {
 	)
 }
 
+function NewspaperReader({
+	reader,
+	revealedParagraphs,
+	onToggleParagraph,
+}: {
+	reader: SourceReader
+	revealedParagraphs: Set<number>
+	onToggleParagraph: (index: number) => void
+}) {
+	return (
+		<section className="oconnor-paper" aria-label="Il Tempo degli O'Connor">
+			<header className="paper-masthead">
+				<div className="paper-dateline">
+					<span>{formatEditionDate(reader.publishedAt)}</span>
+					<span>{reader.level} learner edition</span>
+				</div>
+				<h2>Il Tempo degli O&apos;Connor</h2>
+				<p>Notizie italiane, parole utili, idee da dire</p>
+			</header>
+
+			<div className="paper-layout">
+				<article className="paper-story">
+					<div className="paper-story-heading">
+						<p>{reader.sourceName}</p>
+						<h3>{reader.title}</h3>
+						<span>
+							{reader.sourceMaterial === 'article'
+								? 'Adapted from the published report'
+								: 'Adapted from the news summary'}
+						</span>
+					</div>
+
+					<div className="paper-paragraphs">
+						{reader.paragraphs.map((paragraph, index) => {
+							const revealed = revealedParagraphs.has(index)
+							return (
+								<section className="paper-paragraph" key={`${reader.id}-${index}`}>
+									<p lang="it">{paragraph.italian}</p>
+									<button
+										type="button"
+										aria-expanded={revealed}
+										onClick={() => onToggleParagraph(index)}>
+										{revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+										{revealed ? 'Hide English' : 'Reveal English'}
+									</button>
+									{revealed && (
+										<p className="paper-translation" lang="en">
+											{paragraph.english}
+										</p>
+									)}
+								</section>
+							)
+						})}
+					</div>
+				</article>
+
+				<aside className="paper-sidebar">
+					<section>
+						<h4>Parole utili</h4>
+						<dl>
+							{reader.glossary.map((item) => (
+								<div key={`${item.italian}-${item.english}`}>
+									<dt>{item.italian}</dt>
+									<dd>{item.english}</dd>
+								</div>
+							))}
+						</dl>
+					</section>
+					<section>
+						<h4>La tua opinione</h4>
+						<p lang="it">{reader.discussionPrompt}</p>
+					</section>
+					<a href={reader.sourceUrl} target="_blank" rel="noreferrer">
+						<ExternalLink size={16} />
+						Original report
+					</a>
+				</aside>
+			</div>
+		</section>
+	)
+}
+
+function isSourceReader(value: unknown): value is SourceReader {
+	if (!value || typeof value !== 'object') return false
+	const candidate = value as Partial<SourceReader>
+	return (
+		typeof candidate.id === 'string' &&
+		typeof candidate.title === 'string' &&
+		Array.isArray(candidate.paragraphs) &&
+		candidate.paragraphs.every(
+			(paragraph) =>
+				typeof paragraph?.italian === 'string' &&
+				typeof paragraph?.english === 'string'
+		) &&
+		Array.isArray(candidate.glossary)
+	)
+}
+
 function isVideoItem(item: SourceItem) {
 	return item.id.startsWith('youtube-') && Boolean(item.embedUrl)
 }
@@ -545,6 +656,17 @@ function formatSourceDate(value?: string) {
 	}).format(date)
 }
 
+function formatEditionDate(value?: string) {
+	const date = value ? new Date(value) : new Date()
+	const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
+	return new Intl.DateTimeFormat('en-GB', {
+		weekday: 'long',
+		day: 'numeric',
+		month: 'long',
+		year: 'numeric',
+	}).format(safeDate)
+}
+
 function getSourceNotes(
 	source: ItalianSource,
 	diagnostics: SourceDiagnostics | null | undefined,
@@ -554,8 +676,13 @@ function getSourceNotes(
 
 	const youtube = diagnostics?.youtube
 	if (youtube?.status === 'ok') {
-		const theme = youtube.query?.label ? ` Theme: ${youtube.query.label}.` : ''
-		return `Live YouTube search is enabled. ${youtube.count} video prompts loaded.${theme}`
+		const freshCount = youtube.freshCount ?? youtube.count
+		const freshness =
+			freshCount === youtube.count
+				? `${freshCount} new-to-you clips`
+				: `${freshCount} new and ${youtube.count - freshCount} rotated clips`
+		const theme = youtube.query?.label ? ` ${youtube.query.label}.` : ''
+		return `${freshness}.${theme}`
 	}
 
 	if (youtube?.configured) {
