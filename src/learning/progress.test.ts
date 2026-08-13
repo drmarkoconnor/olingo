@@ -3,12 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getExerciseAction } from '@/learning/content'
 import { exerciseIsAvailableForWeek, sourceContentUnlocked } from '@/learning/curriculum'
 import {
+	generatedContentVersion,
 	generatedPromptIsCleanEnglish,
+	loadGeneratedExercises,
 	saveGeneratedExercises,
 } from '@/learning/generated-sentences'
 import {
 	ensureExerciseStates,
+	exerciseContractIssue,
 	loadDailySprint,
+	quarantineExercise,
 	submitMistakeRepair,
 	withMinimumComplexity,
 } from '@/learning/progress'
@@ -166,17 +170,14 @@ describe('daily sprint composition', () => {
 			userId,
 			[
 				{
-					promptEnglish: 'I need to make a quick decision with my family.',
-					targetItalian:
-						'Devo prendere una decisione veloce con la mia famiglia.',
-					acceptedItalian: [
-						'Devo prendere una decisione veloce con la mia famiglia.',
-					],
-					hints: ['Use devo + infinitive.'],
+					promptEnglish: 'Can I set the table?',
+					targetItalian: 'Posso apparecchiare la tavola?',
+					acceptedItalian: ['Posso apparecchiare la tavola?'],
+					hints: ['Use posso + infinitive.'],
 					tags: ['generated', 'modal', 'family'],
-					phraseFamily: 'Making plans',
-					action: 'Ask opinion',
-					keyVerb: 'dovere',
+					phraseFamily: 'Offering help',
+					action: 'Offer help',
+					keyVerb: 'potere',
 					construction: 'modal-infinitive',
 					frameId: 'offer-family-modal-help',
 					tenseFocus: 'modal-infinitive',
@@ -192,28 +193,159 @@ describe('daily sprint composition', () => {
 				programWeek: 5,
 				sentenceLength: 'medium',
 				sceneId: 'family-table',
-				action: 'Ask opinion',
+				action: 'Offer help',
 				provider: 'openai',
 				packId: 'test-pack',
 			}
 		)
 
-		const queue = await loadDailySprint(userId, 4, {
+		const queue = await loadDailySprint(userId, 20, {
 			targetLevel: 'B1',
 			sentenceLength: 'medium',
-			sceneAction: 'Ask opinion',
+			sceneAction: 'Offer help',
 			programWeek: 5,
 		})
+		const library = await loadGeneratedExercises(userId)
 
 		expect(queue.some((item) => item.exercise.generated)).toBe(true)
 		expect(
-			queue.some((item) =>
-				item.exercise.targetItalian.includes('decisione veloce')
-			)
+			library.some((item) => item.targetItalian.includes('apparecchiare la tavola'))
 		).toBe(true)
-		expect(queue.some((item) => item.exercise.frameId === 'offer-family-modal-help')).toBe(
+		expect(library.some((item) => item.frameId === 'offer-family-modal-help')).toBe(
 			true
 		)
+	})
+
+	it('rejects the screenshot failure where Offer help hides a narrating target', async () => {
+		const saved = await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish: 'I told her yesterday evening.',
+					targetItalian: 'Le ho detto ieri sera.',
+					acceptedItalian: ['Le ho detto ieri sera.'],
+					hints: ['Use le + ho detto.'],
+					tags: ['past', 'pronoun'],
+					phraseFamily: 'Telling someone what happened',
+					action: 'Offer help',
+					communicativeFunction: 'narrate',
+					tenseFocus: 'passato-prossimo',
+					vocabDomain: 'family',
+					maxWords: 6,
+					utilityScore: 94,
+					cefrLevel: 'A2',
+				},
+			],
+			{
+				targetLevel: 'A2',
+				programWeek: 9,
+				sceneId: 'family-table',
+				action: 'Offer help',
+				provider: 'openai',
+			}
+		)
+
+		expect(saved).toEqual([])
+		expect(
+			exerciseContractIssue({
+				id: 'bad-offer',
+				type: 'sentence',
+				sceneId: 'family-table',
+				promptEnglish: 'I told her yesterday evening.',
+				targetItalian: 'Le ho detto ieri sera.',
+				acceptedItalian: ['Le ho detto ieri sera.'],
+				hints: [],
+				tags: ['past'],
+				phraseFamily: 'Telling someone what happened',
+				difficulty: 2,
+				action: 'Offer help',
+				communicativeFunction: 'narrate',
+			})
+		).toContain('disagree')
+	})
+
+	it('retires pre-contract generated content instead of showing it again', async () => {
+		const [saved] = await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish: 'Can I carry that bag for you?',
+					targetItalian: 'Posso portarti quella borsa?',
+					acceptedItalian: ['Posso portarti quella borsa?'],
+					hints: ['Use posso + infinitive.'],
+					tags: ['modal', 'offer'],
+					phraseFamily: 'Offering practical help',
+					action: 'Offer help',
+					communicativeFunction: 'offer',
+					tenseFocus: 'modal-infinitive',
+					vocabDomain: 'travel',
+					maxWords: 6,
+					utilityScore: 95,
+					cefrLevel: 'A2',
+				},
+			],
+			{
+				targetLevel: 'A2',
+				programWeek: 5,
+				sceneId: 'station',
+				action: 'Offer help',
+				provider: 'openai',
+			}
+		)
+		expect(saved.contentVersion).toBe(generatedContentVersion)
+		await db.generatedExercises.put({ ...saved, contentVersion: 1, retired: 0 })
+
+		expect(await loadGeneratedExercises(userId)).toEqual([])
+		expect((await db.generatedExercises.get(saved.id))?.retired).toBe(1)
+	})
+
+	it('quarantines a reported prompt without recording a learner failure', async () => {
+		await saveGeneratedExercises(
+			userId,
+			[
+				{
+					promptEnglish: 'Can I open the door for you?',
+					targetItalian: 'Posso aprirti la porta?',
+					acceptedItalian: ['Posso aprirti la porta?'],
+					hints: ['Use posso + aprirti.'],
+					tags: ['modal', 'offer'],
+					phraseFamily: 'Offering practical help',
+					action: 'Offer help',
+					communicativeFunction: 'offer',
+					tenseFocus: 'modal-infinitive',
+					vocabDomain: 'home',
+					maxWords: 6,
+					utilityScore: 95,
+					cefrLevel: 'A2',
+				},
+			],
+			{
+				targetLevel: 'A2',
+				programWeek: 5,
+				sceneId: 'family-table',
+				action: 'Offer help',
+				provider: 'openai',
+			}
+		)
+		const queue = await loadDailySprint(userId, 12, {
+			targetLevel: 'A2',
+			programWeek: 5,
+			sceneId: 'family-table',
+			sceneAction: 'Offer help',
+			generateFresh: false,
+		})
+		const item = queue.find((entry) =>
+			entry.exercise.targetItalian.includes('aprirti la porta')
+		)
+		expect(item).toBeDefined()
+
+		await quarantineExercise(userId, item!)
+
+		expect((await db.generatedExercises.get(item!.exercise.id))?.retired).toBe(1)
+		expect(
+			(await db.exerciseStates.get([userId, item!.exercise.id]))?.archived
+		).toBe(1)
+		expect(await db.exerciseLogs.count()).toBe(0)
 	})
 
 	it('rejects generated sentences that are long or low utility', async () => {

@@ -107,6 +107,24 @@ type GeneratedExercise = {
 }
 
 const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const contentVersion = 2
+
+const actionByFunction: Record<CommunicativeFunction, string> = {
+	request: 'Ask for something',
+	offer: 'Offer help',
+	'ask-back': 'Ask a follow-up',
+	'refuse-politely': 'Refuse politely',
+	'give-reason': 'Give a reason',
+	repair: 'Ask for clarification',
+	locate: 'Find or locate something',
+	plan: 'Make a plan',
+	narrate: 'Tell what happened',
+	react: 'React naturally',
+}
+
+function actionForFunction(value: CommunicativeFunction) {
+	return actionByFunction[value]
+}
 
 const sentencePackSchema = {
 	type: 'object',
@@ -404,8 +422,8 @@ function fallbackPack(body: Body, count: number): GeneratedExercise[] {
 				],
 				phraseFamily: frame.label,
 				phase: 'produce',
-				action: body.action || frame.communicativeFunction,
-				communicativeGoal: `${frame.communicativeFunction} in a ${frame.vocabDomain} situation.`,
+				action: actionForFunction(frame.communicativeFunction),
+				communicativeGoal: frame.seedEnglish,
 				spokenCue: 'Say the useful version quickly, then type it.',
 				repairPrompts: [
 					frame.seedEnglish,
@@ -482,6 +500,8 @@ function sanitizeExercises(exercises: GeneratedExercise[], count: number, body: 
 		})
 		.map((exercise) => ({
 			...exercise,
+			action: actionForFunction(exercise.communicativeFunction),
+			communicativeGoal: exercise.promptEnglish,
 			acceptedItalian: exercise.acceptedItalian.length
 				? exercise.acceptedItalian
 				: [exercise.targetItalian],
@@ -551,7 +571,10 @@ async function generateWithOpenAI(body: Body, count: number) {
 							'promptEnglish must be pure English: no Italian words, no mixed-language phrases, and no meta instructions such as "Use it in a conversation".',
 							'Every targetItalian should be a natural sentence the learner could say aloud.',
 							'Every promptEnglish must be an exact, unambiguous translation of targetItalian, including person, number, tense, and time relationships.',
+							'action must be the plain-language label for that item\'s communicativeFunction; never copy the overall scene action onto an item with a different function.',
+							'communicativeGoal must repeat the precise English intention in promptEnglish, not a grammar label such as "narrate".',
 							'npcLine must be a short natural Italian line from another speaker which makes the learner response sensible; do not put an English instruction there.',
+							'promptEnglish, action, communicativeGoal, npcLine, targetItalian, and frame metadata must describe one coherent conversational turn.',
 							'Use common adult situations: food, family, sport, cafe, shopping, travel, home, health, culture, or local news.',
 							'Reject surreal, abstract, literary, classroom-only, or low-utility sentences.',
 							'Do not actively drill recognitionOnlyTenses; mention them only if needed for recognition.',
@@ -626,6 +649,8 @@ async function validateWithOpenAI(
 							'The item must match its frameId metadata and exact requested CEFR level.',
 							'The target must stay within maxWords and avoid abstract, surreal, literary, or classroom-only content.',
 							'npcLine, when present, must be natural Italian and make targetItalian a sensible response.',
+							'action and communicativeFunction must agree, and communicativeGoal must preserve the exact promptEnglish intention.',
+							'All visible fields must form one coherent turn; reject unrelated context, cues, targets, or metadata.',
 						],
 						exercises: exercises.map((exercise, index) => ({ index, ...exercise })),
 					}),
@@ -761,6 +786,7 @@ export default async (req: Request) => {
 	})
 
 	const payload = {
+		contentVersion,
 		packId,
 		provider,
 		level: normaliseLevel(body.level),

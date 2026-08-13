@@ -31,6 +31,10 @@ import {
 	sentenceFitsLength,
 } from '@/learning/generated-sentences'
 import {
+	actionMatchesFunction,
+	functionsForAction,
+} from '@/learning/conversation-frames'
+import {
 	cueModeForStep,
 	deriveSkillId,
 	effectiveProgramWeek,
@@ -83,6 +87,16 @@ export type SprintItem = {
 
 function exerciseLevel(exercise: Exercise): CefrLevel {
 	return exercise.cefrLevel ?? levelForDifficulty(exercise.difficulty)
+}
+
+function exerciseMatchesAction(exercise: Exercise, action: string) {
+	if (getExerciseAction(exercise) === action) return true
+	const functions = functionsForAction(action)
+	return Boolean(
+		functions?.length &&
+			exercise.communicativeFunction &&
+			functions.includes(exercise.communicativeFunction)
+	)
 }
 
 function isDue(iso?: string | null) {
@@ -250,7 +264,7 @@ export async function loadDailySprint(
 		? freshDueItems.filter(
 				(item) =>
 					item.exercise.sceneId === focusSceneId &&
-					getExerciseAction(item.exercise) === options.sceneAction
+					exerciseMatchesAction(item.exercise, options.sceneAction as string)
 		  )
 		: []
 	const generatedSameScene = generatedFresh.filter(
@@ -299,7 +313,8 @@ export async function loadDailySprint(
 		const actionExercises =
 			options.sceneAction
 				? sameSceneExercises.filter(
-						(exercise) => getExerciseAction(exercise) === options.sceneAction
+						(exercise) =>
+							exerciseMatchesAction(exercise, options.sceneAction as string)
 				  )
 				: []
 		for (const exercise of [
@@ -533,6 +548,10 @@ export async function submitExerciseAnswer(args: {
 			cueMode: args.item.cueMode,
 		}
 	)
+	if (!result.exerciseValid) {
+		const updated = await quarantineExercise(args.userId, args.item)
+		return { result, updated }
+	}
 	const updated = scheduleExerciseReview(args.item.state, result.outcome)
 
 	await db.exerciseStates.put(updated)
@@ -594,6 +613,40 @@ export async function submitExerciseAnswer(args: {
 	return { result, updated }
 }
 
+export function exerciseContractIssue(exercise: Exercise) {
+	if (!exercise.promptEnglish.trim() || !exercise.targetItalian.trim()) {
+		return 'The exercise is missing its intended meaning or model answer.'
+	}
+	if (
+		!actionMatchesFunction(
+			getExerciseAction(exercise),
+			exercise.communicativeFunction
+		)
+	) {
+		return 'The activity label and the requested communicative function disagree.'
+	}
+	return null
+}
+
+export async function quarantineExercise(userId: string, item: SprintItem) {
+	const updated: ExerciseState = { ...item.state, archived: 1 }
+	await db.transaction(
+		'rw',
+		db.exerciseStates,
+		db.generatedExercises,
+		db.mistakes,
+		async () => {
+			await db.exerciseStates.put(updated)
+			const generated = await db.generatedExercises.get(item.exercise.id)
+			if (generated?.userId === userId) {
+				await db.generatedExercises.put({ ...generated, retired: 1 })
+			}
+			await db.mistakes.delete(`${userId}:${item.exercise.id}`)
+		}
+	)
+	return updated
+}
+
 async function evaluateExerciseAnswer(
 	exercise: Exercise,
 	answer: string,
@@ -609,6 +662,21 @@ async function evaluateExerciseAnswer(
 	}
 ) {
 	const fallback = evaluateAnswer(exercise, answer, hintsUsed, msUsed)
+	const localIssue = exerciseContractIssue(exercise)
+	if (localIssue) {
+		return {
+			...fallback,
+			exerciseValid: false,
+			invalidReason: localIssue,
+			accepted: false,
+			communicative: false,
+			close: false,
+			outcome: 'again' as const,
+			message: 'This prompt was inconsistent.',
+			shortFeedback: 'It has been removed without affecting your progress.',
+			errorTags: [],
+		}
+	}
 	if (typeof window === 'undefined') return fallback
 
 	try {
@@ -619,11 +687,31 @@ async function evaluateExerciseAnswer(
 		})
 		if (!response.ok) return fallback
 		const data = (await response.json()) as Partial<EvaluationResult>
+		const exerciseValid = data.exerciseValid !== false
+		if (!exerciseValid) {
+			return {
+				...fallback,
+				...data,
+				exerciseValid: false,
+				invalidReason:
+					data.invalidReason ?? 'The visible task and model answer did not agree.',
+				accepted: false,
+				communicative: false,
+				close: false,
+				outcome: 'again' as const,
+				message: 'This prompt was unclear.',
+				shortFeedback: 'It has been removed without affecting your progress.',
+				errorTags: [],
+				spellingIssues: [],
+			} satisfies EvaluationResult
+		}
 		const accepted = Boolean(data.accepted)
 		const communicative = Boolean(data.communicative)
 		return {
 			...fallback,
 			...data,
+			exerciseValid: true,
+			invalidReason: '',
 			accepted,
 			communicative,
 			close: data.close ?? (!accepted && communicative),

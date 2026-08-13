@@ -47,7 +47,9 @@ describe('conversation frame matrix', () => {
 			limit: 6,
 		})
 		expect(frames.length).toBeGreaterThan(0)
-		expect(frames[0].communicativeFunction).toBe('offer')
+		expect(frames.every((frame) => frame.communicativeFunction === 'offer')).toBe(
+			true
+		)
 		expect(
 			frames.every((frame) =>
 				['present', 'modal-infinitive', 'imperative'].includes(frame.tenseFocus)

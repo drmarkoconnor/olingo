@@ -278,6 +278,10 @@ export function cueModeForStep(step: ComplexityStep): CueMode {
 	return 'interaction'
 }
 
+export function visibleExercisePrompt(exercise: Exercise, cueMode: CueMode) {
+	return cueMode === 'model' ? exercise.targetItalian : exercise.promptEnglish
+}
+
 export function complexityPlan(count: number, challenge: ChallengeMode) {
 	const plans: Record<ChallengeMode, ComplexityStep[]> = {
 		comfortable: [1, 2, 2, 3, 3, 4, 4, 5, 5, 5],

@@ -7,6 +7,7 @@ import {
 	effectiveProgramWeek,
 	exerciseMatchesSessionIntent,
 	focusAvailableAtLevel,
+	visibleExercisePrompt,
 } from '@/learning/session-focus'
 
 function exercise(overrides: Partial<Exercise> = {}): Exercise {
@@ -79,5 +80,12 @@ describe('session intent and complexity', () => {
 		expect(complexityPlan(5, 'intensive')).toEqual([4, 4, 5, 5, 5])
 		expect(cueModeForStep(1)).toBe('model')
 		expect(cueModeForStep(2)).toBe('english')
+		expect(visibleExercisePrompt(exercise(), 'model')).toBe('Ci vedremo domani.')
+		expect(visibleExercisePrompt(exercise(), 'situation')).toBe(
+			'We will meet tomorrow.'
+		)
+		expect(visibleExercisePrompt(exercise(), 'interaction')).toBe(
+			'We will meet tomorrow.'
+		)
 	})
 })

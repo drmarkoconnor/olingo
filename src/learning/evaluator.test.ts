@@ -13,6 +13,7 @@ describe('evaluateAnswer', () => {
 			6000
 		)
 		expect(result.accepted).toBe(true)
+		expect(result.exerciseValid).toBe(true)
 		expect(result.communicative).toBe(true)
 		expect(result.outcome).toBe('easy')
 	})

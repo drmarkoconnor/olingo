@@ -164,6 +164,7 @@ export type MisspellingItem = {
 export type GeneratedExerciseItem = Exercise & {
 	userId: string
 	cefrLevel: CefrLevel
+	contentVersion?: number
 	source: 'ai' | 'fallback'
 	contentHash: string
 	createdAt: string

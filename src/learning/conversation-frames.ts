@@ -603,6 +603,55 @@ const functionByAction: Record<string, CommunicativeFunction[]> = {
 	'Read headline': ['narrate'],
 }
 
+const actionByFunction: Record<CommunicativeFunction, string> = {
+	request: 'Ask for something',
+	offer: 'Offer help',
+	'ask-back': 'Ask a follow-up',
+	'refuse-politely': 'Refuse politely',
+	'give-reason': 'Give a reason',
+	repair: 'Ask for clarification',
+	locate: 'Find or locate something',
+	plan: 'Make a plan',
+	narrate: 'Tell what happened',
+	react: 'React naturally',
+}
+
+export function functionsForAction(action?: string) {
+	if (!action) return undefined
+	const mapped = functionByAction[action]
+	if (mapped) return mapped
+	const canonical = Object.entries(actionByFunction).find(
+		([, label]) => label === action
+	)?.[0] as CommunicativeFunction | undefined
+	return canonical ? [canonical] : undefined
+}
+
+export function actionMatchesFunction(
+	action: string | undefined,
+	communicativeFunction: CommunicativeFunction | undefined
+) {
+	const functions = functionsForAction(action)
+	return (
+		!functions ||
+		!communicativeFunction ||
+		functions.includes(communicativeFunction)
+	)
+}
+
+export function actionForFunction(
+	communicativeFunction?: CommunicativeFunction
+) {
+	return communicativeFunction
+		? actionByFunction[communicativeFunction]
+		: 'Build a useful response'
+}
+
+export function communicativeFunctionLabel(
+	communicativeFunction?: CommunicativeFunction
+) {
+	return actionForFunction(communicativeFunction)
+}
+
 function levelRank(level: CefrLevel) {
 	return ['A1', 'A2', 'B1', 'B2', 'C1'].indexOf(level)
 }
@@ -664,7 +713,7 @@ export function getConversationFramesForWeek(
 ) {
 	const safeWeek = clampProgramWeek(week)
 	const activeTenses = new Set(getActiveTenseFocusesForWeek(safeWeek))
-	const actionFunctions = options.action ? functionByAction[options.action] : undefined
+	const actionFunctions = functionsForAction(options.action)
 	const domainSet = options.domains?.length ? new Set(options.domains) : null
 	const tenseSet = options.tenseFocuses?.length
 		? new Set(options.tenseFocuses)
@@ -673,7 +722,7 @@ export function getConversationFramesForWeek(
 		? new Set(options.communicativeFunctions)
 		: null
 
-	const scored = conversationFrames
+	const eligible = conversationFrames
 		.filter((frame) => weekAllowed(frame, safeWeek))
 		.filter((frame) => activeTenses.has(frame.tenseFocus))
 		.filter((frame) => !tenseSet || tenseSet.has(frame.tenseFocus))
@@ -683,18 +732,31 @@ export function getConversationFramesForWeek(
 			(frame) =>
 				!functionSet || functionSet.has(frame.communicativeFunction)
 		)
+	const actionEligible = actionFunctions?.length
+		? eligible.filter((frame) =>
+				actionFunctions.includes(frame.communicativeFunction)
+		  )
+		: eligible
+	const scored = (actionEligible.length ? actionEligible : eligible)
 		.map((frame) => {
 			const actionScore =
 				actionFunctions?.includes(frame.communicativeFunction) ? 30 : 0
-				const currentStageScore =
-				safeWeek >= frame.weeks[0] && safeWeek <= Math.min(frame.weeks[1], frame.weeks[0] + 5)
-						? 6
-						: 0
-				const targetLevelScore =
-					options.targetLevel && introducedAt(frame) === options.targetLevel ? 36 : 0
-				return {
-					frame,
-					score: frame.utilityScore + actionScore + currentStageScore + targetLevelScore,
+			const currentStageScore =
+				safeWeek >= frame.weeks[0] &&
+				safeWeek <= Math.min(frame.weeks[1], frame.weeks[0] + 5)
+					? 6
+					: 0
+			const targetLevelScore =
+				options.targetLevel && introducedAt(frame) === options.targetLevel
+					? 36
+					: 0
+			return {
+				frame,
+				score:
+					frame.utilityScore +
+					actionScore +
+					currentStageScore +
+					targetLevelScore,
 			}
 		})
 		.sort((a, b) => b.score - a.score || a.frame.id.localeCompare(b.frame.id))

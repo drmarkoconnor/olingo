@@ -7,6 +7,8 @@ type ExercisePayload = {
 }
 
 export type StructuredEvaluation = {
+	exerciseValid: boolean
+	invalidReason: string
 	accepted: boolean
 	communicative: boolean
 	correctedItalian: string
@@ -102,6 +104,8 @@ export function deterministicEvaluation(
 		: [exercise.promptEnglish]
 
 	return {
+		exerciseValid: true,
+		invalidReason: '',
 		accepted,
 		communicative,
 		correctedItalian: exercise.targetItalian,

@@ -6,6 +6,7 @@ import {
 	Check,
 	CheckCircle2,
 	ExternalLink,
+	Flag,
 	Layers,
 	Lightbulb,
 	Loader2,
@@ -51,6 +52,7 @@ import {
 } from '@/learning/daily-session'
 import {
 	loadDailySprint,
+	quarantineExercise,
 	submitExerciseAnswer,
 	submitMistakeRepair,
 	type SprintItem,
@@ -70,6 +72,7 @@ import {
 } from '@/learning/pronunciation'
 import type { EvaluationResult } from '@/learning/evaluator'
 import { ensureGeneratedSentencePool } from '@/learning/generated-sentences'
+import { communicativeFunctionLabel } from '@/learning/conversation-frames'
 import { getLearningProfile } from '@/learning/learning-profile'
 import {
 	challengeModes,
@@ -81,6 +84,7 @@ import {
 	type ChallengeMode,
 	type SessionDomain,
 	type SessionFocus,
+	visibleExercisePrompt,
 } from '@/learning/session-focus'
 import {
 	ensureGeneratedVocabularyPool,
@@ -240,6 +244,9 @@ export default function Study() {
 	)
 	const trainingWeek = effectiveProgramWeek(programWeek, sessionFocus)
 	const selectedFocus = focusDefinition(sessionFocus)
+	const sceneActionEnabled = ['adaptive', 'fluency', 'vocabulary'].includes(
+		sessionFocus
+	)
 
 	useEffect(() => {
 		setSessionConfirmed(
@@ -273,9 +280,11 @@ export default function Study() {
 				cards.find((card) => card.id === selectedSceneId && card.available) ??
 				cards.find((card) => card.available) ??
 				scenes[0]
-			const selectedAction = selectedScene.actions.includes(selectedSceneAction)
-				? selectedSceneAction
-				: selectedScene.actions[0]
+			const selectedAction = sceneActionEnabled
+				? selectedScene.actions.includes(selectedSceneAction)
+					? selectedSceneAction
+					: selectedScene.actions[0]
+				: undefined
 			const [queue, dueMistakes, selectedPronunciationPassage] =
 				await Promise.all([
 					loadDailySprint(userId, sprintLimit, {
@@ -366,6 +375,7 @@ export default function Study() {
 		sessionConfirmed,
 		sessionDomain,
 		sessionFocus,
+		sceneActionEnabled,
 		sentenceLength,
 		selectedSceneAction,
 		selectedSceneId,
@@ -426,9 +436,11 @@ export default function Study() {
 		},
 		[current, sceneCards, selectedSceneId]
 	)
-	const generationAction = scene.actions.includes(selectedSceneAction)
-		? selectedSceneAction
-		: scene.actions[0]
+	const generationAction = sceneActionEnabled
+		? scene.actions.includes(selectedSceneAction)
+			? selectedSceneAction
+			: scene.actions[0]
+		: undefined
 
 	useEffect(() => {
 		if (loading || !sessionConfirmed) return
@@ -767,8 +779,8 @@ export default function Study() {
 		}
 	}
 
-	async function appendFreshBonusSentences(completedCount: number) {
-		if (completedCount < sentenceQueue.length - 3) return
+	async function appendFreshBonusSentences(completedCount: number, force = false) {
+		if (!force && completedCount < sentenceQueue.length - 3) return
 		if (sentenceRefreshPromiseRef.current) {
 			await sentenceRefreshPromiseRef.current
 			return
@@ -830,6 +842,10 @@ export default function Study() {
 
 	async function nextSentence() {
 		if (!feedback || !practiceCurrent) return
+		if (!feedback.result.exerciseValid) {
+			await reportBadPrompt()
+			return
+		}
 		if (!feedback.result.communicative && !sentenceRepairAttempt) {
 			setSentenceRepairCarryMs(feedback.msUsed)
 			setSentenceRepairAttempt(true)
@@ -867,6 +883,30 @@ export default function Study() {
 		if (bonusPracticeActive || nextCompletedCount >= sentenceQueue.length - 3) {
 			void appendFreshBonusSentences(nextCompletedCount).catch(console.error)
 		}
+	}
+
+	async function reportBadPrompt() {
+		if (!practiceCurrent) return
+		const exerciseId = practiceCurrent.exercise.id
+		await quarantineExercise(userId, practiceCurrent)
+		setSentenceQueue((items) =>
+			items.filter((item) => item.exercise.id !== exerciseId)
+		)
+		setAnswer('')
+		setHintsRevealed(0)
+		setWordBankVisible(false)
+		setWordBankUsed(false)
+		setSpokenFirst(false)
+		setModelIntroduced(false)
+		setSentenceRepairAttempt(false)
+		setSentenceRepairCarryMs(0)
+		setSpeechError(null)
+		setFeedback(null)
+		setUnitStartedAt(Date.now())
+		void appendFreshBonusSentences(
+			sentenceActivity?.completedCount ?? 0,
+			true
+		).catch(console.error)
 	}
 
 	async function handleRepairSubmit(event: FormEvent) {
@@ -1277,6 +1317,7 @@ export default function Study() {
 							onRevealHint={revealHint}
 							onRevealWordBank={revealWordBank}
 							onRecording={handleSentenceRecording}
+							onReportPrompt={reportBadPrompt}
 							onSubmit={handleSentenceSubmit}
 						/>
 					)}
@@ -1642,6 +1683,7 @@ function SentenceBuilder({
 	onHearModel,
 	onNext,
 	onRecording,
+	onReportPrompt,
 	onRevealHint,
 	onRevealWordBank,
 	onSubmit,
@@ -1665,6 +1707,7 @@ function SentenceBuilder({
 	onHearModel: () => void
 	onNext: () => void
 	onRecording: (recording: VoiceRecording) => void
+	onReportPrompt: () => void
 	onRevealHint: () => void
 	onRevealWordBank: () => void
 	onSubmit: (event: FormEvent) => void
@@ -1677,7 +1720,7 @@ function SentenceBuilder({
 		cueMode === 'model'
 			? {
 					label: 'Meet this useful pattern',
-					prompt: current.exercise.targetItalian,
+					prompt: visibleExercisePrompt(current.exercise, cueMode),
 					className: 'prompt prompt-italian',
 			  }
 			: cueMode === 'anchor'
@@ -1693,14 +1736,15 @@ function SentenceBuilder({
 						: complexityStep === 2
 						? 'Rebuild this useful pattern'
 						: 'Say this in Italian',
-					prompt: current.exercise.promptEnglish,
+					prompt: visibleExercisePrompt(current.exercise, cueMode),
 					className: 'prompt',
 			  }
 			: {
-					label: cueMode === 'interaction' ? 'Reply in Italian' : 'Respond in Italian',
-					prompt: hasConversationCue
-						? current.exercise.communicativeGoal
-						: current.exercise.promptEnglish,
+					label:
+						cueMode === 'interaction'
+							? 'Reply with this meaning'
+							: 'Express this meaning in Italian',
+					prompt: visibleExercisePrompt(current.exercise, cueMode),
 					className: 'prompt prompt-situation',
 			  }
 	const retrievalInstruction =
@@ -1709,8 +1753,8 @@ function SentenceBuilder({
 			: complexityStep === 3
 			? 'Reuse the pattern with this changed detail.'
 			: complexityStep === 4
-			? 'Give the first short answer that fits the situation.'
-			: 'Respond naturally and keep the exchange moving.'
+			? 'Say one short, natural Italian version of the meaning above.'
+			: 'Reply naturally while preserving the meaning above.'
 	const frameMeta = [
 		`Step ${complexityStep} of 5`,
 		`${current.exercise.cefrLevel ?? current.levelBand ?? 'target'} ${
@@ -1720,7 +1764,9 @@ function SentenceBuilder({
 				? 'repair'
 				: 'new variation'
 		}`,
-		current.exercise.communicativeFunction,
+		current.exercise.communicativeFunction
+			? communicativeFunctionLabel(current.exercise.communicativeFunction)
+			: null,
 		current.exercise.tenseFocus,
 		current.exercise.vocabDomain,
 		isRepairAttempt ? 'immediate repair' : null,
@@ -1849,7 +1895,9 @@ function SentenceBuilder({
 				{feedback && (
 					<div
 						className={
-							feedback.result.spellingOnly
+							!feedback.result.exerciseValid
+								? 'feedback feedback-invalid'
+								: feedback.result.spellingOnly
 								? 'feedback feedback-spelling'
 								: feedback.result.accepted
 								? 'feedback feedback-good'
@@ -1859,19 +1907,25 @@ function SentenceBuilder({
 						}>
 						<strong>{feedback.result.message}</strong>
 						<span className="feedback-note">{feedback.result.shortFeedback}</span>
-						<div className="feedback-model">
-							<p>{feedback.model}</p>
-							<span>
-								<b>Meaning:</b> {current.exercise.promptEnglish}
+						{feedback.result.exerciseValid ? (
+							<div className="feedback-model">
+								<p>{feedback.model}</p>
+								<span>
+									<b>Meaning:</b> {current.exercise.promptEnglish}
+								</span>
+							</div>
+						) : (
+							<span className="feedback-note">
+								{feedback.result.invalidReason}
 							</span>
-						</div>
+						)}
 						{feedback.spoken && (
 							<span className="voice-result">
 								Spoken answer started in {formatDuration(feedback.responseLatencyMs ?? 0)}
 							</span>
 						)}
 						<div className="feedback-actions">
-							{canTTS() && (
+							{feedback.result.exerciseValid && canTTS() && (
 								<button
 									className="btn btn-secondary"
 										type="button"
@@ -1892,6 +1946,15 @@ function SentenceBuilder({
 				)}
 
 				<div className="control-bar">
+					{!feedback && (
+						<button
+							className="btn btn-secondary"
+							type="button"
+							onClick={onReportPrompt}>
+							<Flag size={18} />
+							Unclear prompt
+						</button>
+					)}
 					<button
 						className="btn btn-secondary"
 						type="button"
@@ -1914,7 +1977,9 @@ function SentenceBuilder({
 					{feedback ? (
 						<button className="btn btn-primary" type="button" onClick={onNext}>
 							<ArrowRight size={18} />
-							{!feedback.result.communicative && !isRepairAttempt
+							{!feedback.result.exerciseValid
+								? 'Skip unclear prompt'
+								: !feedback.result.communicative && !isRepairAttempt
 								? 'Repair from memory'
 								: 'Next'}
 						</button>

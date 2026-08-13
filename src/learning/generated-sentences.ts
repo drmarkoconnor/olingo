@@ -11,6 +11,8 @@ import {
 	getExerciseRoundFocus,
 } from '@/learning/curriculum'
 import {
+	actionForFunction,
+	actionMatchesFunction,
 	countItalianWords,
 	getActiveTenseFocusesForWeek,
 	getConversationFramesForWeek,
@@ -79,6 +81,7 @@ type GeneratedExercisePayload = {
 
 type GeneratedPackResponse = {
 	exercises?: GeneratedExercisePayload[]
+	contentVersion?: number
 	provider?: 'openai' | 'fallback'
 	packId?: string
 	level?: CefrLevel
@@ -90,6 +93,7 @@ type GeneratedPackResponse = {
 
 const packSize = 16
 const freshPoolTarget = 24
+export const generatedContentVersion = 2
 
 export function isCefrLevel(value: unknown): value is CefrLevel {
 	return typeof value === 'string' && cefrLevels.includes(value as CefrLevel)
@@ -263,10 +267,20 @@ export async function loadGeneratedExercises(userId: string) {
 		.equals(userId)
 		.and((exercise) => exercise.retired !== 1)
 		.toArray()
-	const sorted = items.sort(
-		(a, b) =>
-			new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+	const stale = items.filter(
+		(item) => item.contentVersion !== generatedContentVersion
 	)
+	if (stale.length) {
+		await db.generatedExercises.bulkPut(
+			stale.map((item) => ({ ...item, retired: 1 as const }))
+		)
+	}
+	const sorted = items
+		.filter((item) => item.contentVersion === generatedContentVersion)
+		.sort(
+			(a, b) =>
+				new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+		)
 	return filterNearDuplicateGeneratedItems(sorted)
 }
 
@@ -328,11 +342,20 @@ export async function saveGeneratedExercises(
 		limit: 18,
 	})
 	const fallbackMaxWords = defaultMaxWordsFor(targetLevel, options.sentenceLength)
-	const existing = await db.generatedExercises
+	const allExisting = await db.generatedExercises
 		.where('userId')
 		.equals(userId)
 		.toArray()
-	const existingHashes = new Set(existing.map((item) => item.contentHash))
+	const existing = allExisting.filter(
+			(item) =>
+				item.retired !== 1 &&
+				item.contentVersion === generatedContentVersion
+		)
+	const existingHashes = new Set(
+		allExisting
+			.filter((item) => item.contentVersion === generatedContentVersion)
+			.map((item) => item.contentHash)
+	)
 	const existingItalianList = [
 		...exercises.map((exercise) => exercise.targetItalian),
 		...existing.map((item) => item.targetItalian),
@@ -391,7 +414,7 @@ export async function saveGeneratedExercises(
 			payload.construction,
 			`${phraseFamily}:${payload.keyVerb ?? stage.tags[0] ?? targetLevel}`
 		)
-		const id = `${userId}:ai:${contentHash}`
+		const id = `${userId}:ai:v${generatedContentVersion}:${contentHash}`
 		const tags = unique([
 			itemLevel.toLowerCase(),
 			'generated',
@@ -405,10 +428,12 @@ export async function saveGeneratedExercises(
 		const vocabDomain = payload.vocabDomain ?? frame?.vocabDomain
 		const communicativeFunction =
 			payload.communicativeFunction ?? frame?.communicativeFunction
+		if (!actionMatchesFunction(payload.action, communicativeFunction)) continue
 
 		items.push({
 			id,
 			userId,
+			contentVersion: generatedContentVersion,
 			source: options.provider === 'fallback' ? 'fallback' : 'ai',
 			contentHash,
 			type: 'sentence',
@@ -426,8 +451,8 @@ export async function saveGeneratedExercises(
 			cefrLevel: itemLevel,
 			generated: true,
 			phase: payload.phase ?? defaultPhase(itemLevel),
-			action: payload.action ?? options.action ?? 'Build',
-			communicativeGoal: payload.communicativeGoal,
+			action: actionForFunction(communicativeFunction),
+			communicativeGoal: promptEnglish,
 			spokenCue:
 				payload.spokenCue ??
 				'Say a rough version quickly before typing. Good enough comes first.',
@@ -646,6 +671,7 @@ export async function ensureGeneratedSentencePool(
 		})
 		if (!response.ok) return generated
 		const pack = (await response.json()) as GeneratedPackResponse
+		if (pack.contentVersion !== generatedContentVersion) return generated
 		const saved = await saveGeneratedExercises(userId, pack.exercises ?? [], {
 			...options,
 			targetLevel,
@@ -672,6 +698,7 @@ export async function restoreGeneratedSentenceLibrary(
 		const data = (await response.json()) as { packs?: GeneratedPackResponse[] }
 		const restored: GeneratedExerciseItem[] = []
 		for (const pack of data.packs ?? []) {
+			if (pack.contentVersion !== generatedContentVersion) continue
 			restored.push(
 				...(await saveGeneratedExercises(userId, pack.exercises ?? [], {
 					...options,

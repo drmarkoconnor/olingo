@@ -1109,6 +1109,12 @@ input[type='number']:focus {
 	color: #674b08;
 }
 
+.feedback-invalid {
+	background: #fff8df;
+	border: 1px solid #e5c76d;
+	color: #5d480a;
+}
+
 .repair-prompt-list {
 	display: grid;
 	gap: 6px;

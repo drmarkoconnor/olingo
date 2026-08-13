@@ -3,6 +3,8 @@ import type { Exercise } from '@/learning/content'
 export type ExerciseOutcome = 'again' | 'hard' | 'good' | 'easy'
 
 export type EvaluationResult = {
+	exerciseValid: boolean
+	invalidReason: string
 	accepted: boolean
 	communicative: boolean
 	close: boolean
@@ -156,6 +158,8 @@ export function evaluateAnswer(
 		? exercise.repairPrompts
 		: [exercise.promptEnglish]
 	const base = {
+		exerciseValid: true,
+		invalidReason: '',
 		correctedItalian: exercise.targetItalian,
 		meaning: exercise.promptEnglish,
 		repairPrompts,

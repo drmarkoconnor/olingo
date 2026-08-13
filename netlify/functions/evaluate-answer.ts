@@ -12,6 +12,10 @@ type Body = {
 		acceptedItalian?: string[]
 		tags?: string[]
 		repairPrompts?: string[]
+		action?: string
+		communicativeGoal?: string
+		communicativeFunction?: string
+		npcLine?: string
 	}
 	answer?: string
 	context?: {
@@ -43,7 +47,7 @@ export default async (req: Request) => {
 	})
 	const result = ai ?? fallback
 
-	if (!result.accepted) {
+	if (result.exerciseValid !== false && !result.accepted) {
 		const store = getStore({ name: 'mistake-ledger' })
 		const key = `users/${encodeURIComponent(auth.user.id)}/${new Date().toISOString()}-${
 			body.exercise.id ?? 'exercise'
