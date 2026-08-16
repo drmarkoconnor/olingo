@@ -574,6 +574,8 @@ export async function submitExerciseAnswer(args: {
 		action: getExerciseAction(args.item.exercise),
 		mode: args.mode ?? 'sentence',
 		skillId: args.item.skillId ?? deriveSkillId(args.item.exercise),
+		phraseFamily: args.item.exercise.phraseFamily,
+		vocabDomain: args.item.exercise.vocabDomain,
 		complexityStep: args.item.complexityStep,
 		cueMode: args.item.cueMode,
 		responseLatencyMs: args.responseLatencyMs ?? args.msUsed,
@@ -942,14 +944,15 @@ export async function getFluencySnapshot(userId: string) {
 	}
 	for (const log of logs) {
 		const exercise = getExercise(log.exerciseId) ?? generatedMap.get(log.exerciseId)
-		if (exercise) {
-			const current = phraseFamilies.get(exercise.phraseFamily) ?? {
+		const phraseFamily = exercise?.phraseFamily ?? log.phraseFamily
+		if (phraseFamily) {
+			const current = phraseFamilies.get(phraseFamily) ?? {
 				total: 0,
 				communicative: 0,
 			}
 			current.total += 1
 			current.communicative += log.communicative ?? log.correct
-			phraseFamilies.set(exercise.phraseFamily, current)
+			phraseFamilies.set(phraseFamily, current)
 		}
 		if (log.phase) phaseCounts.set(log.phase, (phaseCounts.get(log.phase) ?? 0) + 1)
 	}
@@ -957,21 +960,46 @@ export async function getFluencySnapshot(userId: string) {
 	const unassistedAttempts = skillAttempts.filter(
 		(attempt) => attempt.unassisted
 	).length
+	const drillLogs = logs.filter((log) => log.mode === 'verb-drill')
+	const drillByDate = new Map<string, { activeMs: number; attempts: number }>()
+	for (const log of drillLogs) {
+		const dateKey = new Date(log.ts).toLocaleDateString('en-CA')
+		const current = drillByDate.get(dateKey) ?? { activeMs: 0, attempts: 0 }
+		current.activeMs += log.msUsed
+		current.attempts += 1
+		drillByDate.set(dateKey, current)
+	}
 	const practicedSessions = dailySessions.filter(
 		(session) => session.completedCount > 0
 	)
-	const totalActiveMs = practicedSessions.reduce(
+	const dailyActiveMs = practicedSessions.reduce(
 		(total, session) => total + session.activeMs,
 		0
 	)
-	const maxDailyActiveMs = practicedSessions.reduce(
-		(maximum, session) => Math.max(maximum, session.activeMs),
-		0
+	const drillActiveMs = drillLogs.reduce((sum, log) => sum + log.msUsed, 0)
+	const dailyByDate = new Map(
+		practicedSessions.map((session) => [
+			session.dateKey,
+			{ activeMs: session.activeMs, attempts: session.completedCount },
+		])
 	)
-	const maxDailyQuestions = practicedSessions.reduce(
-		(maximum, session) => Math.max(maximum, session.completedCount),
-		0
-	)
+	const practiceDateKeys = new Set([...dailyByDate.keys(), ...drillByDate.keys()])
+	let maxDailyActiveMs = 0
+	let maxDailyQuestions = 0
+	for (const dateKey of practiceDateKeys) {
+		const daily = dailyByDate.get(dateKey)
+		const drill = drillByDate.get(dateKey)
+		maxDailyActiveMs = Math.max(
+			maxDailyActiveMs,
+			(daily?.activeMs ?? 0) + (drill?.activeMs ?? 0)
+		)
+		maxDailyQuestions = Math.max(
+			maxDailyQuestions,
+			(daily?.attempts ?? 0) + (drill?.attempts ?? 0)
+		)
+	}
+	const totalActiveMs = dailyActiveMs + drillActiveMs
+	const drillPracticeDays = drillByDate.size
 
 	return {
 		total,
@@ -983,10 +1011,13 @@ export async function getFluencySnapshot(userId: string) {
 		repaired,
 		spokenFirst,
 		spokenAttempts: spokenLogs.length,
-		practiceDays: practicedSessions.length,
+		practiceDays: practiceDateKeys.size,
 		totalActiveMs,
 		maxDailyActiveMs,
 		maxDailyQuestions,
+		drillAttempts: drillLogs.length,
+		drillPracticeDays,
+		drillActiveMs,
 		medianResponseLatencyMs,
 		unassistedRate: unassistedAttempts
 			? Math.round((unassistedSuccesses / unassistedAttempts) * 100)

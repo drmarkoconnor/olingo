@@ -11,6 +11,7 @@ import {
 	Sparkles,
 	Tags,
 	Target,
+	Dumbbell,
 } from 'lucide-react'
 import { getFluencySnapshot } from '@/learning/progress'
 import { useAuth } from '@/store/useAuth'
@@ -43,6 +44,9 @@ export default function Stats() {
 		totalActiveMs: 0,
 		maxDailyActiveMs: 0,
 		maxDailyQuestions: 0,
+		drillAttempts: 0,
+		drillPracticeDays: 0,
+		drillActiveMs: 0,
 		medianResponseLatencyMs: 0,
 		unassistedRate: 0,
 		transferRate: 0,
@@ -132,6 +136,11 @@ export default function Stats() {
 					icon={<Target size={22} />}
 					label="Production prompts"
 					value={snapshot.total.toString()}
+				/>
+				<StatTile
+					icon={<Dumbbell size={22} />}
+					label="Focused drill prompts"
+					value={`${snapshot.drillAttempts} / ${formatTime(snapshot.drillActiveMs)}`}
 				/>
 				<StatTile
 					icon={<Gauge size={22} />}

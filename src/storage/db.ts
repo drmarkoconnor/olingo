@@ -70,6 +70,8 @@ export type ExerciseLog = {
 	action?: string
 	mode?: string
 	skillId?: string
+	phraseFamily?: string
+	vocabDomain?: string
 	complexityStep?: ComplexityStep
 	cueMode?: CueMode
 	responseLatencyMs?: number
