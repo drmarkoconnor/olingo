@@ -21,6 +21,31 @@ export type EvaluationResult = {
 	confidence: number
 }
 
+export function evaluationHeadline(
+	result: Pick<
+		EvaluationResult,
+		'exerciseValid' | 'accepted' | 'communicative' | 'spellingOnly'
+	>
+) {
+	if (!result.exerciseValid) return 'This prompt was unclear.'
+	if (result.spellingOnly) return 'Understood. Tidy the spelling once.'
+	if (result.accepted) return 'Accurate and usable.'
+	if (result.communicative) return 'Understood. Polish one detail.'
+	return 'Not yet. Compare the model and try once more.'
+}
+
+export function evaluationOutcomeForJudgment(
+	result: Pick<EvaluationResult, 'accepted' | 'communicative' | 'spellingOnly'>,
+	hintsUsed: number,
+	msUsed: number
+): ExerciseOutcome {
+	if (!result.communicative) return 'again'
+	if (!result.accepted || result.spellingOnly || hintsUsed > 0 || msUsed > 45000) {
+		return 'hard'
+	}
+	return msUsed < 25000 ? 'easy' : 'good'
+}
+
 const accentMap: Record<string, string> = {
 	à: 'a',
 	è: 'e',

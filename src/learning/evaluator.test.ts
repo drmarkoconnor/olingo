@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { exercises } from '@/learning/content'
-import { evaluateAnswer } from '@/learning/evaluator'
+import {
+	evaluateAnswer,
+	evaluationHeadline,
+	evaluationOutcomeForJudgment,
+} from '@/learning/evaluator'
 
 const opinion = exercises.find((exercise) => exercise.id === 'cafe-produce-fast-1')!
 
@@ -32,5 +36,39 @@ describe('evaluateAnswer', () => {
 		expect(result.communicative).toBe(false)
 		expect(result.outcome).toBe('again')
 		expect(result.repairPrompts.length).toBeGreaterThan(0)
+	})
+})
+
+describe('evaluationHeadline', () => {
+	it('never labels an accepted alternative as a failure', () => {
+		expect(
+			evaluationHeadline({
+				exerciseValid: true,
+				accepted: true,
+				communicative: true,
+				spellingOnly: false,
+			})
+		).toBe('Accurate and usable.')
+	})
+
+	it('gives communicative-but-imperfect answers their own clear state', () => {
+		expect(
+			evaluationHeadline({
+				exerciseValid: true,
+				accepted: false,
+				communicative: true,
+				spellingOnly: false,
+			})
+		).toBe('Understood. Polish one detail.')
+	})
+
+	it('gives an AI-accepted natural alternative progress credit', () => {
+		expect(
+			evaluationOutcomeForJudgment(
+				{ accepted: true, communicative: true, spellingOnly: false },
+				0,
+				8000
+			)
+		).toBe('easy')
 	})
 })

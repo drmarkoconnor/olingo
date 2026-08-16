@@ -52,6 +52,8 @@ import {
 } from '@/learning/skill-mastery'
 import {
 	evaluateAnswer,
+	evaluationHeadline,
+	evaluationOutcomeForJudgment,
 	outcomeIsCorrect,
 	type EvaluationResult,
 } from '@/learning/evaluator'
@@ -709,7 +711,8 @@ async function evaluateExerciseAnswer(
 		}
 		const accepted = Boolean(data.accepted)
 		const communicative = Boolean(data.communicative)
-		return {
+		const spellingOnly = data.spellingOnly ?? fallback.spellingOnly
+		const merged = {
 			...fallback,
 			...data,
 			exerciseValid: true,
@@ -717,16 +720,16 @@ async function evaluateExerciseAnswer(
 			accepted,
 			communicative,
 			close: data.close ?? (!accepted && communicative),
-			spellingOnly: data.spellingOnly ?? fallback.spellingOnly,
-			outcome: data.outcome ?? (accepted ? fallback.outcome : communicative ? 'hard' : 'again'),
+			spellingOnly,
+			outcome:
+				data.outcome ??
+				evaluationOutcomeForJudgment(
+					{ accepted, communicative, spellingOnly },
+					hintsUsed,
+					msUsed
+				),
 			normalisedAnswer: data.normalisedAnswer ?? fallback.normalisedAnswer,
-			message:
-				data.message ??
-				(accepted
-					? fallback.message
-					: communicative
-					? 'Communicative. Polish it once.'
-					: 'Not yet. Use the model sentence, then it will return in Mistake Gym.'),
+			message: '',
 			errorTags: data.errorTags ?? fallback.errorTags,
 			spellingIssues: data.spellingIssues ?? fallback.spellingIssues,
 			repairPrompts: data.repairPrompts ?? fallback.repairPrompts,
@@ -735,6 +738,10 @@ async function evaluateExerciseAnswer(
 			shortFeedback: data.shortFeedback ?? fallback.shortFeedback,
 			confidence: data.confidence ?? fallback.confidence,
 		} satisfies EvaluationResult
+		return {
+			...merged,
+			message: evaluationHeadline(merged),
+		}
 	} catch {
 		return fallback
 	}

@@ -4,6 +4,7 @@ import {
 	BookOpen,
 	Cloud,
 	Dumbbell,
+	House,
 	Map,
 	Newspaper,
 	RotateCcw,
@@ -19,6 +20,7 @@ import Settings from '@/pages/Settings'
 import ImportData from '@/pages/ImportData'
 import Sources from '@/pages/Sources'
 import Drills from '@/pages/Drills'
+import MemoryHouse from '@/pages/MemoryHouse'
 import AuthGate from '@/ui/AuthGate'
 
 export default function App() {
@@ -52,6 +54,7 @@ export default function App() {
 				<Routes>
 					<Route path="/" element={<Study />} />
 					<Route path="/drills" element={<Drills />} />
+					<Route path="/memory-house" element={<MemoryHouse />} />
 					<Route path="/scenes" element={<Scenes />} />
 					<Route path="/mistakes" element={<Mistakes />} />
 					<Route path="/sources" element={<Sources />} />
@@ -72,6 +75,10 @@ export default function App() {
 				<NavLink to="/drills">
 					<Dumbbell size={18} />
 					Drills
+				</NavLink>
+				<NavLink to="/memory-house">
+					<House size={18} />
+					House
 				</NavLink>
 				<NavLink to="/mistakes">
 					<RotateCcw size={18} />
