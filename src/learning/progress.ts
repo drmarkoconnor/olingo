@@ -550,7 +550,7 @@ export async function submitExerciseAnswer(args: {
 	responseLatencyMs?: number
 	utteranceDurationMs?: number
 	mode?: string
-	courseEvidence?: Pick<CourseAttempt, 'lessonId' | 'turnId' | 'variant' | 'flow'> & { runId: string; practicedAt?: string }
+	courseEvidence?: Pick<CourseAttempt, 'lessonId' | 'turnId' | 'variant' | 'flow' | 'contextId'> & { runId: string; practicedAt?: string }
 	msUsed: number
 }) {
 	if (args.courseEvidence && !args.attemptId?.trim()) throw new Error('Conversation evidence requires an attempt identifier.')
@@ -652,6 +652,7 @@ export async function submitExerciseAnswer(args: {
 				...courseMetadata,
 				id: args.attemptId!, userId: args.userId,
 				answer: args.answer, assessment: result,
+				speechEvidence: args.spoken ? args.speechEvidence : undefined,
 				accepted: result.accepted, communicative: result.communicative,
 				spoken: Boolean(args.spoken), hintsUsed: args.hintsUsed,
 				atISO: evidenceAt,

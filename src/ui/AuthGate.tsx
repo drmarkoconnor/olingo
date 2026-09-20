@@ -1,115 +1,62 @@
 import { FormEvent, useState } from 'react'
-import { KeyRound, LogIn, Mail, ShieldCheck } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/store/useAuth'
 
 export default function AuthGate() {
-	const {
-		acceptInvitePassword,
-		clearError,
-		error,
-		inviteToken,
-		loading,
-		signInWithEmail,
-		signInWithGoogle,
-	} = useAuth()
+	const { acceptInvitePassword, clearError, error, inviteToken, passwordResetRequired,
+		loading, signInWithEmail, signInWithGoogle, requestReset, resetPassword,
+		identitySettings, settingsError, notice } = useAuth()
 	const [email, setEmail] = useState('')
 	const [password, setPassword] = useState('')
-	const [invitePassword, setInvitePassword] = useState('')
+	const [confirmPassword, setConfirmPassword] = useState('')
+	const [forgotten, setForgotten] = useState(false)
+	const [formError, setFormError] = useState('')
+	const settingPassword = Boolean(inviteToken || passwordResetRequired)
 
-	async function submitLogin(event: FormEvent) {
+	async function submit(event: FormEvent) {
 		event.preventDefault()
 		clearError()
-		await signInWithEmail(email, password)
-	}
-
-	async function submitInvite(event: FormEvent) {
-		event.preventDefault()
-		clearError()
-		await acceptInvitePassword(invitePassword)
+		setFormError('')
+		if (settingPassword) {
+			if (password !== confirmPassword) { setFormError('The two passwords do not match.'); return }
+			if (inviteToken) await acceptInvitePassword(password)
+			else await resetPassword(password)
+		} else if (forgotten) await requestReset(email)
+		else await signInWithEmail(email, password)
 	}
 
 	return (
-		<div className="auth-page">
-			<section className="auth-card">
-				<div className="auth-mark">
-					<ShieldCheck size={30} />
-				</div>
-				<p className="eyebrow">Private family access</p>
-				<h1>Olingo</h1>
-				<p className="auth-copy">
-					Sign in to keep each person&apos;s progress separate and protect the
-					paid AI feedback endpoints.
-				</p>
-
-				{inviteToken ? (
-					<form className="auth-form" onSubmit={submitInvite}>
-						<label htmlFor="invite-password">Set your password</label>
-						<div className="input-icon">
-							<KeyRound size={18} />
-							<input
-								id="invite-password"
-								minLength={8}
-								onChange={(event) => setInvitePassword(event.target.value)}
-								placeholder="At least 8 characters"
-								required
-								type="password"
-								value={invitePassword}
-							/>
-						</div>
-						<button className="btn btn-primary" disabled={loading} type="submit">
-							<LogIn size={18} />
-							{loading ? 'Creating account' : 'Create account'}
-						</button>
-					</form>
-				) : (
-					<form className="auth-form" onSubmit={submitLogin}>
-						<label htmlFor="email">Email</label>
-						<div className="input-icon">
-							<Mail size={18} />
-							<input
-								autoComplete="email"
-								id="email"
-								onChange={(event) => setEmail(event.target.value)}
-								placeholder="you@example.com"
-								required
-								type="email"
-								value={email}
-							/>
-						</div>
-						<label htmlFor="password">Password</label>
-						<div className="input-icon">
-							<KeyRound size={18} />
-							<input
-								autoComplete="current-password"
-								id="password"
-								onChange={(event) => setPassword(event.target.value)}
-								placeholder="Password"
-								required
-								type="password"
-								value={password}
-							/>
-						</div>
-						<button className="btn btn-primary" disabled={loading} type="submit">
-							<LogIn size={18} />
-							{loading ? 'Signing in' : 'Sign in'}
-						</button>
-						<button
-							className="btn btn-secondary"
-							disabled={loading}
-							onClick={signInWithGoogle}
-							type="button">
-							<ShieldCheck size={18} />
-							Continue with Google
-						</button>
-					</form>
-				)}
-
-				{error && <p className="auth-error">{error}</p>}
-				<p className="auth-note">
-					Accounts are created from Netlify invite links. Open signups stay
-					closed.
-				</p>
-			</section>
-		</div>
+		<div className="auth-page"><section className="auth-card">
+			<div className="auth-mark"><ShieldCheck size={30} /></div>
+			<p className="eyebrow">Your Italian learning account</p>
+			<h1>{settingPassword ? 'Set your password' : forgotten ? 'Reset your password' : 'Olingo'}</h1>
+			<p className="auth-copy">Use your own account to keep your learning history and preferences separate.</p>
+			<form className="auth-form" onSubmit={submit}>
+				{!settingPassword && <>
+					<label htmlFor="email">Email</label>
+					<input autoComplete="email" id="email" onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required type="email" value={email} />
+				</>}
+				{(!forgotten || settingPassword) && <>
+					<label htmlFor="password">{settingPassword ? 'New password' : 'Password'}</label>
+					<input autoComplete={settingPassword ? 'new-password' : 'current-password'} id="password" minLength={settingPassword ? 8 : undefined} onChange={e => setPassword(e.target.value)} placeholder={settingPassword ? 'At least 8 characters' : 'Password'} required type="password" value={password} />
+				</>}
+				{settingPassword && <>
+					<label htmlFor="confirm-password">Repeat new password</label>
+					<input autoComplete="new-password" id="confirm-password" minLength={8} onChange={e => setConfirmPassword(e.target.value)} required type="password" value={confirmPassword} />
+				</>}
+				<button className="btn btn-primary" disabled={loading} type="submit">
+					{loading ? 'Please wait…' : inviteToken ? 'Accept invitation' : passwordResetRequired ? 'Save new password' : forgotten ? 'Send reset link' : 'Sign in'}
+				</button>
+				{!settingPassword && <button className="btn btn-secondary" disabled={loading} onClick={() => { setForgotten(!forgotten); clearError(); setPassword('') }} type="button">{forgotten ? 'Back to sign in' : 'Forgot password?'}</button>}
+				{!settingPassword && !forgotten && identitySettings?.providers.google && <button className="btn btn-secondary" disabled={loading} onClick={signInWithGoogle} type="button">Continue with Google</button>}
+			</form>
+			{(formError || error) && <p className="auth-error" role="alert">{formError || error}</p>}
+			{notice && <p className="auth-note" role="status">{notice}</p>}
+			{settingsError && <p className="auth-note">{settingsError}</p>}
+			{identitySettings && <p className="auth-note">
+				{identitySettings.disableSignup ? 'New accounts require an invitation from the site owner.' : 'Registration is currently open in the site configuration. This screen offers sign-in and invitation acceptance.'}
+				{' '}{identitySettings.providers.google ? 'Google sign-in is enabled.' : 'Google sign-in is not enabled; use email and password.'}
+			</p>}
+		</section></div>
 	)
 }

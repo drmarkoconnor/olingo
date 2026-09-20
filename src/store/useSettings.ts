@@ -34,9 +34,14 @@ type SettingsState = {
 	setSelectedScene: (sceneId: string, action?: string) => void
 }
 
-const LS_KEY = 'olingo.settings'
+const LS_KEY = 'olingo.settings.v2'
+let activeSettingsUser: string | null = null
 
-type PersistedSettings = Pick<
+export function settingsStorageKey(userId: string) {
+	return `${LS_KEY}:${encodeURIComponent(userId)}`
+}
+
+export type PersistedSettings = Pick<
 	SettingsState,
 	| 'dailyGoal'
 	| 'sound'
@@ -51,7 +56,7 @@ type PersistedSettings = Pick<
 	| 'selectedSceneAction'
 >
 
-const defaultSettings: PersistedSettings = {
+export const defaultSettings: PersistedSettings = {
 	dailyGoal: 30,
 	sound: true,
 	tts: true,
@@ -85,34 +90,38 @@ function normaliseSceneAction(sceneId: string, value: unknown) {
 	return scene.actions[0] ?? defaultSettings.selectedSceneAction
 }
 
-function load(): PersistedSettings {
+export function normaliseSettings(value: unknown): PersistedSettings {
+	const parsed = value && typeof value === 'object' ? value as Partial<PersistedSettings> : {}
+	const selectedSceneId = normaliseSceneId(parsed.selectedSceneId)
+	const targetLevel = normaliseTargetLevel(parsed.targetLevel)
+	const sessionFocus = normaliseSessionFocus(parsed.sessionFocus)
+	return {
+		dailyGoal: typeof parsed.dailyGoal === 'number' && Number.isFinite(parsed.dailyGoal) ? Math.max(5, Math.min(120, Math.round(parsed.dailyGoal))) : defaultSettings.dailyGoal,
+		sound: typeof parsed.sound === 'boolean' ? parsed.sound : defaultSettings.sound,
+		tts: typeof parsed.tts === 'boolean' ? parsed.tts : defaultSettings.tts,
+		targetLevel,
+		sentenceLength: ['short', 'medium', 'long'].includes(parsed.sentenceLength ?? '') ? parsed.sentenceLength! : defaultSettings.sentenceLength,
+		programWeek: clampProgramWeek(parsed.programWeek ?? 1),
+		sessionFocus: focusAvailableAtLevel(sessionFocus, targetLevel) ? sessionFocus : 'adaptive',
+		sessionDomain: normaliseSessionDomain(parsed.sessionDomain),
+		challengeMode: normaliseChallengeMode(parsed.challengeMode),
+		selectedSceneId,
+		selectedSceneAction: normaliseSceneAction(selectedSceneId, parsed.selectedSceneAction),
+	}
+}
+
+function load(userId: string | null): PersistedSettings {
 	try {
-		if (typeof localStorage === 'undefined') return defaultSettings
-		const raw = localStorage.getItem(LS_KEY)
-		if (raw) {
-			const parsed = JSON.parse(raw)
-			const selectedSceneId = normaliseSceneId(parsed.selectedSceneId)
-			return {
-				...defaultSettings,
-				...parsed,
-				targetLevel: normaliseTargetLevel(parsed.targetLevel),
-				programWeek: clampProgramWeek(parsed.programWeek ?? 1),
-				sessionFocus: normaliseSessionFocus(parsed.sessionFocus),
-				sessionDomain: normaliseSessionDomain(parsed.sessionDomain),
-				challengeMode: normaliseChallengeMode(parsed.challengeMode),
-				selectedSceneId,
-				selectedSceneAction: normaliseSceneAction(
-					selectedSceneId,
-					parsed.selectedSceneAction
-				),
-			}
-		}
-	} catch {}
-	return defaultSettings
+		if (!userId || typeof localStorage === 'undefined') return { ...defaultSettings }
+		const raw = localStorage.getItem(settingsStorageKey(userId))
+		return raw ? normaliseSettings(JSON.parse(raw)) : { ...defaultSettings }
+	} catch {
+		return { ...defaultSettings }
+	}
 }
 
 function save(s: SettingsState) {
-	if (typeof localStorage === 'undefined') return
+	if (!activeSettingsUser || typeof localStorage === 'undefined') return
 	const {
 		dailyGoal,
 		sound,
@@ -126,8 +135,8 @@ function save(s: SettingsState) {
 		selectedSceneId,
 		selectedSceneAction,
 	} = s
-	localStorage.setItem(
-		LS_KEY,
+	try { localStorage.setItem(
+		settingsStorageKey(activeSettingsUser),
 		JSON.stringify({
 			dailyGoal,
 			sound,
@@ -141,13 +150,13 @@ function save(s: SettingsState) {
 			selectedSceneId,
 			selectedSceneAction,
 		})
-	)
+	) } catch { /* Preferences still work in memory when browser storage is unavailable. */ }
 }
 
 export const useSettings = create<SettingsState>((set, get) => ({
-	...load(),
+	...load(null),
 	setDailyGoal: (dailyGoal) => {
-		set({ dailyGoal })
+		set({ dailyGoal: normaliseSettings({ ...get(), dailyGoal }).dailyGoal })
 		save(get())
 	},
 	setSound: (sound) => {
@@ -200,3 +209,22 @@ export const useSettings = create<SettingsState>((set, get) => ({
 		save(get())
 	},
 }))
+
+/** Switch synchronously with authentication: never expose the previous learner's preferences. */
+export function switchSettingsUser(userId: string | null) {
+	if (activeSettingsUser === userId) return
+	activeSettingsUser = userId
+	useSettings.setState(load(userId))
+}
+
+export function getSettingsSnapshot(): PersistedSettings {
+	return normaliseSettings(useSettings.getState())
+}
+
+/** Ignore a late cloud response after the account changed. */
+export function applyUserSettings(userId: string, settings: unknown): boolean {
+	if (activeSettingsUser !== userId) return false
+	useSettings.setState(normaliseSettings(settings))
+	save(useSettings.getState())
+	return true
+}

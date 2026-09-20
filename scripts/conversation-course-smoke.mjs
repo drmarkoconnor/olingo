@@ -32,161 +32,192 @@ const browser = await chromium.launch({
 });
 const context = await browser.newContext({ permissions: ['microphone'], viewport: { width: 1280, height: 1050 } });
 const page = await context.newPage();
+const uid = 'local-conversation-smoke';
+await context.addInitScript((id) => localStorage.setItem('olingo.localUid', id), uid);
 const pageErrors = [];
 page.on('pageerror', (error) => pageErrors.push(error.message));
+const generationRequests = [];
+const assessmentRequests = [];
 let transcriptionRequests = 0;
-let assessmentRequests = [];
+let syncRequests = 0;
+let failEpisode = false;
+let failFollowUp = false;
 let failAssessment = false;
-let recognised = 'Sto bene, e tu?';
+const remoteAttempts = new Map();
+const remoteDocuments = new Map();
+const recognised = 'Sto bene, e tu?';
 const confirmed = 'Bene, grazie! Tu come stai?';
-
+const lessonId = 'conversation-a1-social';
+const turns = [
+  { id: `${lessonId}-1`, npcLine: 'Ciao, sono Elisa. E tu?', instruction: 'Greet Elisa and introduce yourself as Alex.', example: 'Ciao Elisa, mi chiamo Alex.', hint: 'A greeting and your name are enough.' },
+  { id: `${lessonId}-2`, npcLine: 'Piacere, Alex! Come stai?', instruction: 'Say you are well and ask how Elisa is.', example: 'Sto bene, grazie. E tu?', hint: 'Return a friendly question.' },
+  { id: `${lessonId}-3`, npcLine: 'Anch’io, grazie. Hai un po’ di tempo?', instruction: 'Suggest having a coffee together.', example: 'Prendiamo un caffè insieme?', hint: 'Offer a simple invitation.' },
+];
+const episode = { id: 'smoke-fresh-episode', lessonId, level: 'A1', canDo: 'Greet, introduce and invite.', title: 'An unexpected meeting at the bookshop', context: 'You meet someone at a village bookshop.', situationKey: 'village-bookshop-new-friend', turns, createdAt: new Date().toISOString() };
 await page.route('**/api/**', async (route) => {
-  const pathname = new URL(route.request().url()).pathname;
-  if (pathname === '/api/transcribe-speech') {
+  const url = new URL(route.request().url());
+  if (url.pathname === '/api/session') return route.fulfill({ json: { user: { id: uid } } });
+  if (url.pathname === '/api/conversation-history') {
+    syncRequests++;
+    const syncedAt = new Date().toISOString();
+    if (route.request().method() === 'POST') {
+      const { attempts = [], documents = [] } = route.request().postDataJSON();
+      for (const attempt of attempts) remoteAttempts.set(attempt.id, attempt);
+      for (const document of documents) remoteDocuments.set(`${document.kind}:${document.id}`, document);
+      return route.fulfill({ json: { userId: uid, attempts, documents, syncedAt } });
+    }
+    return route.fulfill({ json: { userId: uid, records: [...(url.searchParams.get('kind') === 'attempts' ? remoteAttempts : remoteDocuments).values()], nextCursor: null, syncedAt } });
+  }
+  if (url.pathname === '/api/generate-conversation') {
+    const body = route.request().postDataJSON();
+    generationRequests.push(body);
+    if (body.mode === 'episode') {
+      if (failEpisode) return route.fulfill({ status: 503, json: { error: 'Fresh generation is unavailable for this test.' } });
+      return route.fulfill({ json: { provider: 'openai', generationId: 'smoke-generation', episode: { ...episode, interests: body.interests } } });
+    }
+    if (failFollowUp) return route.fulfill({ status: 503, json: { error: 'Follow-up generation is unavailable. Your assessed answer is saved.' } });
+    return route.fulfill({ json: { provider: 'openai', generationId: 'smoke-follow-up', lessonId: body.lessonId, episodeId: body.episodeId, turn: turns[body.turnIndex] } });
+  }
+  if (url.pathname === '/api/transcribe-speech') {
     transcriptionRequests++;
     return route.fulfill({ json: { transcript: recognised, provider: 'openai' } });
   }
-  if (pathname === '/api/evaluate-answer') {
+  if (url.pathname === '/api/evaluate-answer') {
     const body = route.request().postDataJSON();
     assessmentRequests.push(body);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    if (failAssessment) return route.fulfill({ status: 503, json: { status: 'unassessed', error: 'Assessment is unavailable. Your answer has not been scored and your progress has not changed. Please try again.' } });
-    return route.fulfill({ json: {
-      exerciseValid: true, invalidReason: '', accepted: true, communicative: true,
-      // Intentionally differs: accepted alternatives must keep the learner's wording.
-      correctedItalian: body.exercise.targetItalian,
-      meaning: body.exercise.promptEnglish, errorTags: [],
-      shortFeedback: 'Your alternative is natural and keeps the intended meaning.',
-      repairPrompts: [], confidence: 0.97, provider: 'openai', status: 'assessed',
-    } });
+    if (failAssessment) return route.fulfill({ status: 503, json: { error: 'Assessment is unavailable. Your answer has not been scored.' } });
+    return route.fulfill({ json: { exerciseValid: true, invalidReason: '', accepted: true, communicative: true, correctedItalian: body.exercise.targetItalian, meaning: body.exercise.promptEnglish, errorTags: [], shortFeedback: 'Your alternative fits this conversation.', repairPrompts: [], confidence: .97, provider: 'openai', status: 'assessed' } });
   }
-  return route.fulfill({ status: 503, json: { error: 'Disabled in isolated browser test' } });
+  return route.fulfill({ status: 503, json: { error: 'Disabled in isolated browser smoke' } });
 });
-
 async function evidence() {
   return page.evaluate(async () => {
     const { db } = await import('/src/storage/db.ts');
-    return { course: await db.courseAttempts.toArray(), logs: await db.exerciseLogs.toArray(), skills: await db.skillStates.toArray(), mistakes: await db.mistakes.toArray() };
+    return JSON.parse(JSON.stringify({ course: (await db.courseAttempts.toArray()).map(({ syncedAt, ...attempt }) => attempt), logs: await db.exerciseLogs.toArray(), mistakes: await db.mistakes.toArray() }));
   });
 }
 async function assertNoOverflow(label) {
   const sizes = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth }));
   assert.ok(sizes.scroll <= sizes.width + 1, `${label}: page width ${sizes.scroll} overflows viewport ${sizes.width}`);
 }
-
+async function enableCloudMock() {
+  await page.evaluate(async () => {
+    const { useAuth } = await import('/src/store/useAuth.ts');
+    useAuth.setState({ localMode: false });
+  });
+  await page.getByText('Conversation history synced to your account.', { exact: true }).first().waitFor();
+}
 try {
   await page.goto(`${baseURL}/conversations`);
-  assert.ok(await page.evaluate(() => localStorage.getItem('olingo.localUid')?.startsWith('local-')), 'Only run against local development');
-  await page.locator('.course-card').first().waitFor();
-  for (const level of (process.env.OLINGO_SMOKE_LEVELS || 'A1,A2,B1,B2,C1,C2').split(',')) {
+  await page.getByRole('heading', { name: 'Italian for things you want to say.', exact: true }).waitFor();
+  await enableCloudMock();
+  const browse = page.getByText('Browse all conversational goals', { exact: true });
+  assert.equal(await browse.evaluate(node => node.parentElement.open), false, 'Goals are collapsed at entry');
+  assert.equal(await page.locator('.course-card').count(), 12);
+  assert.equal(await page.locator('.course-card').first().isVisible(), false);
+  for (const level of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) {
     await page.getByRole('button', { name: level, exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: level, exact: true }).getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('.course-card').count(), 12, `${level} should expose every strand`);
-    assert.equal(await page.locator('.course-level-summary h3').count(), 1);
+    await page.waitForFunction(level => document.querySelector(`.course-levels button[aria-pressed="true"]`)?.textContent === level, level);
+    assert.equal(await page.locator('.conversation-garden__bed').count(), 12);
     await assertNoOverflow(`${level} desktop`);
     await page.setViewportSize({ width: 390, height: 844 });
     await assertNoOverflow(`${level} mobile`);
     await page.setViewportSize({ width: 1280, height: 1050 });
   }
+  await page.getByRole('button', { name: 'Continue at C2', exact: true }).click();
+  assert.equal(await page.getByLabel('Level guidance').count(), 0, 'Level guidance must be dismissible');
+  assert.equal(await page.getByRole('button', { name: 'C2', exact: true }).getAttribute('aria-pressed'), 'true');
   await page.getByRole('button', { name: 'A1', exact: true }).click();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: '/tmp/olingo-course-desktop.png', fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: '/tmp/olingo-course-mobile.png', fullPage: true });
-  await page.locator('.course-card').first().getByRole('button', { name: 'Explore conversation' }).click();
-  await page.locator('#course-answer').waitFor();
-  assert.equal(await page.locator('.course-turn').count(), 1, 'Present exactly one turn');
-  assert.equal(await page.getByText('Turn 1 of 3', { exact: true }).count(), 1);
-  assert.equal(await page.getByText('One possible answer', { exact: true }).count(), 0, 'No model answer before assessment');
-  assert.ok(!(await page.locator('body').innerText()).includes('Ciao Elisa, mi chiamo Alex.'), 'Example should not leak into initial prompt');
-  await assertNoOverflow('Turn mobile');
+  await page.waitForFunction(() => document.querySelector('.course-levels button[aria-pressed="true"]')?.textContent === 'A1');
+  await page.getByText('Bring your interests or a source', { exact: true }).click();
+  await page.locator('#course-interests').fill('Gardening, jazz');
+  await page.locator('#course-interests').blur();
+  failEpisode = true;
+  await page.getByRole('button', { name: 'Start a fresh conversation', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Fresh generation is unavailable' }).waitFor();
+  assert.equal(await page.locator('.course-turn').count(), 0, 'Generation failure must not silently substitute content');
+  await page.getByRole('button', { name: 'Use an authored episode', exact: true }).click();
+  await page.getByText('A1 · Authored conversation', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Return to pathway', exact: true }).click();
+  failEpisode = false;
+  await page.getByRole('button', { name: 'Start a fresh conversation', exact: true }).click();
+  await page.getByRole('heading', { name: episode.title, exact: true }).waitFor();
+  assert.deepEqual(generationRequests.at(-1).interests, ['Gardening', 'jazz']);
+  assert.equal(await page.locator('.course-turn').count(), 1);
+  assert.equal(await page.getByText('One possible answer', { exact: true }).count(), 0);
   const typed = 'Ciao Elisa! Sono Alex, piacere.';
   await page.locator('#course-answer').fill(typed);
   const before = await evidence();
   failAssessment = true;
   await page.getByRole('button', { name: 'Assess typed practice', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Assessment is unavailable' }).waitFor();
-  assert.deepEqual(await evidence(), before, 'Unavailable assessment must award no course or grammar progress');
-  assert.equal(await page.getByText('Turn 1 of 3', { exact: true }).count(), 1);
-  assert.equal(await page.getByRole('button', { name: 'Next conversational turn', exact: true }).count(), 0);
-  assert.equal(assessmentRequests.at(-1).exercise.evaluationMode, 'open-goal');
-  assert.equal(assessmentRequests.at(-1).answer, typed);
-  assert.equal(await page.locator('#course-answer').inputValue(), typed);
+  assert.deepEqual(await evidence(), before, 'No progress on assessment outage');
   failAssessment = false;
   await page.getByRole('button', { name: 'Assess typed practice', exact: true }).click();
   await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).waitFor();
+  assert.equal(assessmentRequests.at(-1).exercise.evaluationMode, 'open-goal');
   const typedSaved = await evidence();
-  assert.equal(typedSaved.course.length, before.course.length + 1);
-  assert.equal(typedSaved.course.at(-1).spoken, false, 'Typed practice must not become spoken evidence');
-  assert.equal(typedSaved.logs.at(-1).answer, typed, 'Keep the accepted alternative');
+  failFollowUp = true;
+  await page.getByRole('button', { name: 'Next conversational turn', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Follow-up generation is unavailable' }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).count(), 1);
+  assert.equal(await page.getByText('Turn 1 of 3', { exact: true }).count(), 1);
   assert.equal(await page.locator('#course-answer').inputValue(), typed);
-  assert.equal(await page.getByText('Turn 1 of 3', { exact: true }).count(), 1, 'Do not auto-advance while learner reads feedback');
+  assert.deepEqual(await evidence(), typedSaved, 'Generation failure retains assessed evidence unchanged');
+  assert.deepEqual(generationRequests.at(-1).history, [{ role: 'partner', text: turns[0].npcLine }, { role: 'learner', text: typed }]);
   await page.reload();
+  await page.getByRole('heading', { name: 'Welcome back.', exact: true }).waitFor();
+  assert.ok((await page.locator('.conversation-recap').innerText()).includes(typed));
+  await page.getByRole('button', { name: 'Resume unfinished conversation', exact: true }).click();
   await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).waitFor();
-  assert.equal(await page.locator('#course-answer').inputValue(), typed, 'Reload preserves the assessed response');
-  assert.deepEqual(await evidence(), typedSaved, 'Reload of marked turn must not duplicate evidence');
-  assert.equal(assessmentRequests.length, 2, 'Reload must not resubmit the assessment');
+  assert.equal(await page.locator('#course-answer').inputValue(), typed);
+  assert.deepEqual(await evidence(), typedSaved);
+  failFollowUp = false;
   await page.getByRole('button', { name: 'Next conversational turn', exact: true }).click();
   await page.getByText('Turn 2 of 3', { exact: true }).waitFor();
   await page.waitForFunction(() => window.scrollY === 0);
-  const nextTurnTop = await page.locator('.course-turn-top').boundingBox();
-  assert.ok(nextTurnTop && nextTurnTop.y >= 0 && nextTurnTop.y < 844, 'Next turn must bring its prompt back into the mobile viewport');
-  assert.equal(await page.locator('.course-turn').count(), 1);
-  assert.equal(await page.locator('#course-answer').inputValue(), '');
-  assert.equal(await page.getByText('One possible answer', { exact: true }).count(), 0);
-  await page.getByRole('button', { name: 'Record answer', exact: true }).click();
-  await page.getByRole('button', { name: 'Stop recording', exact: true }).waitFor();
-  await page.waitForTimeout(1500);
-  assert.ok(parseFloat(await page.getByLabel('Recording duration').innerText()) >= 1);
-  await page.getByRole('button', { name: 'Stop recording', exact: true }).click();
-  await page.waitForFunction((text) => document.querySelector('#course-answer')?.value === text, recognised);
-  assert.equal(transcriptionRequests, 1);
-  assert.equal(assessmentRequests.length, 2, 'ASR must not mark the spoken response');
-  assert.deepEqual(await evidence(), typedSaved);
-  await page.locator('audio').waitFor();
-  await page.locator('#course-answer').fill(confirmed);
-  await page.locator('#course-flow').selectOption('fluent');
-  await page.getByRole('button', { name: 'Confirm transcript and assess', exact: true }).click();
-  await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).waitFor();
-  const spokenSaved = await evidence();
-  assert.equal(assessmentRequests.at(-1).exercise.evaluationMode, 'open-goal');
-  assert.equal(assessmentRequests.at(-1).answer, confirmed);
-  assert.equal(spokenSaved.course.length, typedSaved.course.length + 1);
-  assert.equal(spokenSaved.course.find(item => item.answer === confirmed).spoken, true);
-  assert.equal(spokenSaved.course.find(item => item.answer === confirmed).flow, 'fluent');
-  assert.ok(spokenSaved.skills.every((item) => item.fastSpokenSuccesses === 0));
-  await page.getByRole('button', { name: 'Next conversational turn', exact: true }).click();
-  await page.getByText('Turn 3 of 3', { exact: true }).waitFor();
-  await page.screenshot({ path: '/tmp/olingo-course-turn-mobile.png', fullPage: true });
-  await assertNoOverflow('Final turn mobile');
-  recognised = 'Ti va di prendere un caffè insieme?';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assertNoOverflow('Generated turn mobile');
   await page.getByRole('button', { name: 'Record answer', exact: true }).click();
   await page.getByRole('button', { name: 'Stop recording', exact: true }).waitFor();
   await page.waitForTimeout(1300);
   await page.getByRole('button', { name: 'Stop recording', exact: true }).click();
-  await page.waitForFunction((text) => document.querySelector('#course-answer')?.value === text, recognised);
-  await page.getByRole('button', { name: 'Give me a cue', exact: true }).click();
-  await page.locator('.course-hint').waitFor();
-  await page.reload();
-  await page.waitForFunction((text) => document.querySelector('#course-answer')?.value === text, recognised);
-  await page.locator('.course-hint').waitFor();
-  assert.equal(assessmentRequests.length, 3, 'Hint and reload must not trigger marking');
+  await page.waitForFunction(text => document.querySelector('#course-answer')?.value === text, recognised);
+  assert.equal(transcriptionRequests, 1);
+  assert.equal(assessmentRequests.length, 2, 'ASR must not assess before confirmation');
+  await page.locator('#course-answer').fill(confirmed);
   await page.getByRole('button', { name: 'Confirm transcript and assess', exact: true }).click();
   await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).waitFor();
-  const hintedSaved = await evidence();
-  assert.equal(hintedSaved.course.length, 3);
-  assert.equal(hintedSaved.course.find(item => item.answer === recognised).hintsUsed, 1, 'Cue shown after capture must remain assisted evidence after reload');
-  assert.equal(hintedSaved.course.find(item => item.answer === recognised).spoken, true);
+  await page.getByRole('button', { name: 'Next conversational turn', exact: true }).click();
+  await page.getByText('Turn 3 of 3', { exact: true }).waitFor();
+  assert.equal(generationRequests.at(-1).history.at(-1).text, confirmed, 'Follow-up must use actual confirmed wording');
+  assert.equal(generationRequests.at(-1).history.length, 4);
+  await page.locator('#course-answer').fill('Ti va di prendere un caffè insieme?');
+  await page.getByRole('button', { name: 'Assess typed practice', exact: true }).click();
+  await page.getByRole('heading', { name: 'That works in this conversation.', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Finish this episode', exact: true }).click();
   await page.getByText('Episode complete', { exact: true }).waitFor();
-  assert.equal(await page.locator('#course-answer').count(), 0);
-
+  assert.equal((await evidence()).course.length, 3);
+  await page.reload();
+  await page.getByRole('heading', { name: 'Welcome back.', exact: true }).waitFor();
+  assert.ok((await page.locator('.conversation-recap').innerText()).includes('Episode completed'));
+  await page.getByRole('button', { name: 'Continue to my pathway', exact: true }).click();
+  await enableCloudMock();
+  assert.ok(syncRequests > 0);
+  await page.waitForFunction(async () => { const { db } = await import('/src/storage/db.ts'); return (await db.courseAttempts.toArray()).every(item => Boolean(item.syncedAt)); });
+  assert.equal(remoteAttempts.size, 3, 'Complete course evidence synced once by immutable ID');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: '/tmp/olingo-fresh-course-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 1050 });
+  await page.screenshot({ path: '/tmp/olingo-fresh-course-desktop.png', fullPage: true });
   assert.deepEqual(pageErrors, []);
-  console.log(`PASS: ${process.env.OLINGO_SMOKE_LEVELS || 'A1–C2'} levels with 12 strands each, desktop/mobile layout, one turn, hidden examples, typed alternative/open-goal payload, outage without advancement or progress, explicit next turn, real recording and transcript confirmation, separate typed/spoken evidence, assessed reload, persisted post-recording hint. `);
+  console.log('PASS: fresh generation and explicit authored fallback; A1–C2 garden and optional warnings; collapsed goals; responsive layout; confirmed-answer-dependent follow-ups; assessment/generation outages; recap/resume; real capture confirmation; matching-user cloud history sync.');
+} catch (error) {
+  await page.screenshot({ path: '/tmp/olingo-course-failure.png', fullPage: true }).catch(() => {});
+  console.error('PAGE ERRORS:', pageErrors);
+  console.error((await page.locator('body').innerText().catch(() => '')).slice(-4000));
+  throw error;
 } finally {
-  await context.close();
-  await browser.close();
-  await localServer?.close();
+  await context.close(); await browser.close(); await localServer?.close();
   await rm(testDir, { recursive: true, force: true });
 }

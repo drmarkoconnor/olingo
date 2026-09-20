@@ -593,6 +593,7 @@ describe('semantic assessment failure isolation', () => {
 
 	it('commits canonical course evidence atomically and keeps it unchanged on retry', async () => {
 		const args = { ...await submission(), attemptId: 'course-attempt', hintsUsed: 1,
+			speechEvidence: { rawTranscript: 'Mi passi pane per favore', confirmedTranscript: 'Mi passi il pane, per favore?', recordingDurationMs: 6400, speechOnsetMs: 900, utteranceDurationMs: 4300, timingBasis: 'recording-start' as const },
 			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'hesitant' as const },
 		}
 		const fetch = vi.fn(async () => Response.json(assessment()))
@@ -602,6 +603,8 @@ describe('semantic assessment failure isolation', () => {
 		const [log] = await db.exerciseLogs.toArray()
 		expect(original).toMatchObject({ userId, answer: args.answer, hintsUsed: 1, spoken: true, runId: 'run-one', atISO: log.ts })
 		expect(original?.assessment).toEqual(log.assessment)
+		expect(original?.speechEvidence).toEqual(args.speechEvidence)
+		expect(original?.speechEvidence).toEqual(log.speechEvidence)
 		await submitExerciseAnswer({ ...args, answer: 'A changed answer must not replace assessed speech.', spoken: false, hintsUsed: 0 })
 		expect(await db.courseAttempts.get(args.attemptId)).toEqual(original)
 		expect(await db.courseAttempts.count()).toBe(1)

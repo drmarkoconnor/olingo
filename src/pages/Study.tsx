@@ -23,6 +23,7 @@ import {
 	Volume2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import SessionRecap from '@/components/SessionRecap'
 import SentenceVoiceRecorder, {
 	type VoiceRecording,
 } from '@/components/SentenceVoiceRecorder'
@@ -1134,6 +1135,7 @@ export default function Study() {
 	if (!sessionConfirmed) {
 		return (
 			<>
+			<SessionRecap />
 			<section className="course-recommendation"><p className="eyebrow">The conversation pathway</p><h2>Practise something you actually want to say.</h2><p>Everyday questions through nuanced discussion, across A1–C2. Three spoken turns at a time, with feedback on your own words.</p><Link className="btn btn-primary" to="/conversations">Explore conversations</Link></section>
 			<SessionLauncher
 				challengeMode={challengeMode}

@@ -24,9 +24,10 @@ import Sources from '@/pages/Sources'
 import Drills from '@/pages/Drills'
 import MemoryHouse from '@/pages/MemoryHouse'
 import AuthGate from '@/ui/AuthGate'
+import { LearningHistoryProvider } from '@/components/LearningHistory'
 
 export default function App() {
-	const { authenticated, ready } = useAuth()
+	const { authenticated, ready, userId, localMode, passwordResetRequired } = useAuth()
 
 	if (!ready) {
 		return (
@@ -39,10 +40,10 @@ export default function App() {
 		)
 	}
 
-	if (!authenticated) return <AuthGate />
+	if (!authenticated || passwordResetRequired) return <AuthGate />
 
 	return (
-		<div className="app">
+		<LearningHistoryProvider key={userId} userId={userId} localMode={localMode}><div className="app">
 			<header className="topbar">
 				<div className="brand-row">
 					<div>
@@ -101,7 +102,7 @@ export default function App() {
 					Settings
 				</NavLink>
 			</nav>
-		</div>
+		</div></LearningHistoryProvider>
 	)
 }
 

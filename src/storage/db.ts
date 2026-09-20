@@ -2,6 +2,7 @@ import Dexie, { Table } from 'dexie'
 import type { CefrLevel, Exercise } from '@/learning/content'
 import type { EvaluationResult } from '@/learning/evaluator'
 import type { CourseAttempt } from '@/learning/course-progress'
+import type { ConversationDocument } from '@/learning/conversation-sync'
 import type {
 	ChallengeMode,
 	ComplexityStep,
@@ -319,6 +320,7 @@ export type DailySessionItem = {
 }
 
 export class OlingoDB extends Dexie {
+	conversationDocuments!: Table<ConversationDocument, [string, string, string]>
 	courseAttempts!: Table<CourseAttempt & { userId: string }, string>
 	speakingDrafts!: Table<SpeakingDraft, [string, string]>
 	words!: Table<Word, string>
@@ -494,6 +496,9 @@ export class OlingoDB extends Dexie {
 		})
 		this.version(11).stores({
 			courseAttempts: '&id, userId, lessonId, atISO',
+		})
+		this.version(12).stores({
+			conversationDocuments: '&[userId+kind+id], userId, kind, updatedAt',
 		})
 	}
 }

@@ -4404,3 +4404,13 @@ input[type='number']:focus {
 @media (max-width: 560px) { .course-grid { grid-template-columns: 1fr; } .course-levels { gap: .35rem; } .course-levels button { min-width: 43px; padding: .7rem; } .course-turn-top { align-items: flex-start; } }
 
 @media (max-width: 850px) { .tabbar { display: flex; overflow-x: auto; justify-content: flex-start; } .tabbar a { flex: 0 0 auto; min-width: 67px; padding: .5rem; } }
+
+.course-level-advice { background: #fff7e7; border: 1px solid #dfc392; border-radius: 16px; padding: 1.3rem; }
+.course-sync-status { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; font-size: .85rem; }
+.course-sync-status p { flex: 1 1 260px; }
+.course-preferences label { display: block; margin: 1rem 0 .4rem; }
+.course-preferences input, .course-preferences textarea { width: 100%; padding: .8rem; border: 1px solid #c5cec7; border-radius: 8px; font: inherit; }
+.course-source-provenance { padding: 1rem; background: #edf3f0; border-radius: 10px; }
+.course-source-provenance p { max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+.conversation-recap { max-width: 850px; margin: 1rem auto; }
+.conversation-recap li { margin-bottom: .6rem; line-height: 1.5; }

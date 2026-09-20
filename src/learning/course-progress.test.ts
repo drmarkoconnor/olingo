@@ -115,4 +115,47 @@ describe('conversation course evidence and spaced recommendations', () => {
 		expect(readiness.level).toBe('A1')
 		expect(readiness.note).toContain('not a CEFR assessment')
 	})
+	it('recognises delayed transfer across distinct generated episodes without requiring an authored baseline', () => {
+		const generated = [
+			...lesson.turns.map((turn, index) => answer({ id: `generated-first-${index}`, turnId: turn.id, variant: 'transfer', contextId: 'episode-a', runId: 'run-a' })),
+			...lesson.turns.map((turn, index) => answer({ id: `generated-second-${index}`, turnId: turn.id, variant: 'transfer', contextId: 'episode-b', runId: 'run-b', atISO: nextDay })),
+		]
+		const progress = lessonProgress(lesson, generated, now)
+		expect(progress.variants).toEqual(['transfer'])
+		expect(progress.contexts).toEqual(['episode-a', 'episode-b'])
+		expect(progress.stable).toBe(true)
+	})
+
+	it('does not mistake a new run or a changed variant label for a new generated context', () => {
+		const repeated = [
+			...lesson.turns.map((turn, index) => answer({ id: `repeat-first-${index}`, turnId: turn.id, variant: 'base', contextId: 'same-episode', runId: 'first-run' })),
+			...lesson.turns.map((turn, index) => answer({ id: `repeat-second-${index}`, turnId: turn.id, variant: 'transfer', contextId: 'same-episode', runId: 'second-run', atISO: nextDay })),
+		]
+		const progress = lessonProgress(lesson, repeated, now)
+		expect(progress.successfulDates).toBe(2)
+		expect(progress.coveredTurnIds).toHaveLength(3)
+		expect(progress.variants).toHaveLength(2)
+		expect(progress.contexts).toEqual(['same-episode'])
+		expect(progress.stable).toBe(false)
+	})
+
+	it('counts a new context only when it contributes successful unassisted speech', () => {
+		const baseline = lesson.turns.map((turn, index) => answer({ id: `context-base-${index}`, turnId: turn.id, variant: 'transfer', contextId: 'episode-a' }))
+		const unsupported = [
+			answer({ id: 'typed-context', spoken: false, variant: 'transfer', contextId: 'episode-b', atISO: nextDay }),
+			answer({ id: 'hinted-context', hintsUsed: 1, variant: 'transfer', contextId: 'episode-c', atISO: nextDay }),
+		]
+		const progress = lessonProgress(lesson, [...baseline, ...unsupported], now)
+		expect(progress.contexts).toEqual(['episode-a'])
+		expect(progress.stable).toBe(false)
+	})
+
+	it('retains legacy authored evidence when adding a fresh generated situation', () => {
+		const authored = lesson.turns.map((turn, index) => answer({ id: `authored-${index}`, turnId: turn.id }))
+		const fresh = answer({ id: 'fresh-later', variant: 'transfer', contextId: 'generated-episode', atISO: nextDay })
+		const progress = lessonProgress(lesson, [...authored, fresh], now)
+		expect(progress.contexts).toEqual([`${lesson.id}:base`, 'generated-episode'])
+		expect(progress.stable).toBe(true)
+	})
+
 })

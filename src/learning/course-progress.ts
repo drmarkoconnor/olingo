@@ -1,3 +1,4 @@
+import type { SpeechEvidence } from '@/storage/db'
 import type { EvaluationResult } from '@/learning/evaluator'
 import type { CefrLevel } from '@/learning/content'
 import { courseLessons, courseStrands, type CourseLesson } from '@/learning/conversation-course'
@@ -5,13 +6,16 @@ import { courseLessons, courseStrands, type CourseLesson } from '@/learning/conv
 /** An assessed, confirmed answer. Callers must pass only the current learner's attempts. */
 export interface CourseAttempt {
 	id: string
+	syncedAt?: string
 	runId?: string
 	answer?: string
 	assessment?: EvaluationResult
+	speechEvidence?: SpeechEvidence
 	userId?: string
 	lessonId: string
 	turnId: string
 	variant: 'base' | 'transfer'
+	contextId?: string
 	accepted: boolean
 	communicative: boolean
 	spoken: boolean
@@ -29,6 +33,7 @@ export interface CourseLessonProgress {
 	typedAttempts: number
 	successfulDates: number
 	variants: Array<'base' | 'transfer'>
+	contexts: string[]
 	coveredTurnIds: string[]
 	intervalDays: number
 	dueAt: string | null
@@ -99,6 +104,7 @@ export function lessonProgress(
 		: successes
 	const coveredTurnIds = [...new Set(successes.map(attempt => attempt.turnId))]
 	const variants = [...new Set(successes.map(attempt => attempt.variant))]
+	const contexts = [...new Set(successes.map(attempt => attempt.contextId || `${lesson.id}:${attempt.variant}`))]
 	const successfulDates = dateCount(successes)
 	const allTurns = lesson.turns.length > 0 && coveredTurnIds.length === lesson.turns.length
 	const delayedSuccess = successfulDates >= 2 && separated(successes)
@@ -108,7 +114,7 @@ export function lessonProgress(
 		sinceLapse.length >= 2 && separated(sinceLapse) &&
 		failures.every(failure => successes.some(attempt => attempt.turnId === failure.turnId && Date.parse(attempt.atISO) > Date.parse(failure.atISO)))
 	)
-	const stable = allTurns && variants.length === 2 && delayedSuccess && recovered
+	const stable = allTurns && contexts.length >= 2 && delayedSuccess && recovered
 	const spokenHistory = history.filter(attempt => attempt.spoken)
 	const recent = spokenHistory.slice(-3)
 	const needsEasyRepair = recent.filter(spokenFailure).length >= 2 && Boolean(recent.length && spokenFailure(recent[recent.length - 1]))
@@ -122,7 +128,7 @@ export function lessonProgress(
 	if (!history.length) reasons.push('New conversation: start with the supported situation.')
 	else {
 		if (!allTurns) reasons.push(`Independent speech recorded for ${coveredTurnIds.length} of ${lesson.turns.length} turns.`)
-		if (variants.length < 2) reasons.push('Try the changed situation to check transfer beyond the original example.')
+		if (contexts.length < 2) reasons.push('Try the changed situation to check transfer beyond the original example.')
 		if (!delayedSuccess) reasons.push('Revisit on a separate day, at least 24 hours later, before judging retention.')
 		if (!recovered) reasons.push('A recent spoken lapse needs a successful repair and another delayed success.')
 		if (stable) reasons.push('Successful independent speech across the lesson, both situations and separate days.')
@@ -138,11 +144,12 @@ export function lessonProgress(
 		typedAttempts: history.filter(attempt => !attempt.spoken).length,
 		successfulDates,
 		variants,
+		contexts,
 		coveredTurnIds,
 		intervalDays,
 		dueAt,
 		isDue,
-		readyForTransfer: successes.some(attempt => attempt.variant === 'base'),
+		readyForTransfer: successes.length > 0,
 		stable,
 		needsEasyRepair,
 		reasons,

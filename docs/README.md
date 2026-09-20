@@ -2,7 +2,9 @@
 
 These documents supersede the original flashcard-only PRD. The current product combines an A1–C2 conversational practice pathway with the earlier sentence-production and review tools.
 
-Start with [Conversation curriculum: A1–C2](CONVERSATION-CURRICULUM.md) for the current spoken pathway, evidence rules and limitations. The earlier documents below explain the original A2–B1 foundation.
+Start with [Conversation curriculum: A1–C2](CONVERSATION-CURRICULUM.md) for the spoken pathway, then [Renewable conversations](RENEWABLE-CONVERSATIONS.md) for fresh scenarios, responsive follow-ups, source-based practice, progress guidance and their implementation limits. The earlier documents below explain the original A2–B1 foundation.
+
+See [Accounts and storage](ACCOUNTS-AND-STORAGE.md) for family sign-in, verified provider settings and data ownership.
 
 Read in this order:
 

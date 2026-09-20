@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
 	CalendarDays,
 	Captions,
@@ -74,6 +75,7 @@ type SourceReader = {
 }
 
 export default function Sources() {
+	const navigate = useNavigate()
 	const { userId } = useAuth()
 	const { programWeek, targetLevel } = useSettings()
 	const [items, setItems] = useState<SourceItem[]>(fallbackSourceItems)
@@ -343,6 +345,11 @@ export default function Sources() {
 					{reader && (
 						<NewspaperReader
 							reader={reader}
+                            onDiscuss={() => navigate('/conversations', { state: { conversationSource: {
+                                label: `${reader.sourceName}: ${reader.title} (${reader.sourceMaterial === 'article' ? 'adapted reading' : 'adapted news summary'})`.slice(0, 200),
+                                url: reader.sourceUrl,
+                                excerpt: reader.paragraphs.map(paragraph => paragraph.italian).join('\n').slice(0, 8000),
+                            } } })}
 							revealedParagraphs={revealedParagraphs}
 							onToggleParagraph={(index) =>
 								setRevealedParagraphs((current) => {
@@ -530,10 +537,12 @@ function NewspaperReader({
 	reader,
 	revealedParagraphs,
 	onToggleParagraph,
+	onDiscuss,
 }: {
 	reader: SourceReader
 	revealedParagraphs: Set<number>
 	onToggleParagraph: (index: number) => void
+	onDiscuss: () => void
 }) {
 	return (
 		<section className="oconnor-paper" aria-label="Il Tempo degli O'Connor">
@@ -597,6 +606,7 @@ function NewspaperReader({
 					<section>
 						<h4>La tua opinione</h4>
 						<p lang="it">{reader.discussionPrompt}</p>
+                        <button className="btn btn-primary" onClick={onDiscuss}>Discuss this in Conversations</button>
 					</section>
 					<a href={reader.sourceUrl} target="_blank" rel="noreferrer">
 						<ExternalLink size={16} />

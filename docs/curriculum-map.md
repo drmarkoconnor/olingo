@@ -1,5 +1,7 @@
 # Curriculum Map
 
+This document preserves the original A2–B1 foundation and scene ideas. The current A1–C2 spiral is specified in [Conversation curriculum](CONVERSATION-CURRICULUM.md), with generated scenarios and dialogue-aware follow-ups described in [Renewable conversations](RENEWABLE-CONVERSATIONS.md). The bands below are not a calendar-based gate or the full extent of the current course.
+
 ## Level Target
 
 The first major curriculum band is A2-to-B1.
