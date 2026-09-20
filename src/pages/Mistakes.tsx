@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useState, useRef } from 'react'
 import { Check, Mic2, Play, Tags, Volume2 } from 'lucide-react'
 import { db, type MistakeItem } from '@/storage/db'
 import { useAuth } from '@/store/useAuth'
@@ -11,6 +11,9 @@ export default function Mistakes() {
 	const [mistakes, setMistakes] = useState<MistakeItem[]>([])
 	const [answers, setAnswers] = useState<Record<string, string>>({})
 	const [feedback, setFeedback] = useState<Record<string, EvaluationResult>>({})
+	const [errors, setErrors] = useState<Record<string, string>>({})
+	const [checking, setChecking] = useState<Record<string, boolean>>({})
+	const inFlight = useRef(new Set<string>())
 	const [startedAt, setStartedAt] = useState<Record<string, number>>({})
 
 	useEffect(() => {
@@ -30,7 +33,11 @@ export default function Mistakes() {
 	async function repair(event: FormEvent, mistake: MistakeItem) {
 		event.preventDefault()
 		const answer = answers[mistake.id]?.trim()
-		if (!answer || mistake.status === 'repaired') return
+		if (!answer || mistake.status === 'repaired' || inFlight.current.has(mistake.id)) return
+		inFlight.current.add(mistake.id)
+		setChecking((current) => ({ ...current, [mistake.id]: true }))
+		setErrors((current) => ({ ...current, [mistake.id]: '' }))
+		try {
 		const msUsed = Date.now() - (startedAt[mistake.id] ?? Date.now())
 		const result = await submitMistakeRepair({
 			userId,
@@ -41,6 +48,12 @@ export default function Mistakes() {
 		setFeedback((current) => ({ ...current, [mistake.id]: result.result }))
 		setStartedAt((current) => ({ ...current, [mistake.id]: Date.now() }))
 		await load()
+		} catch (error) {
+			setErrors((current) => ({ ...current, [mistake.id]: error instanceof Error ? error.message : 'Unable to check this repair. Please try again.' }))
+		} finally {
+			inFlight.current.delete(mistake.id)
+			setChecking((current) => ({ ...current, [mistake.id]: false }))
+		}
 	}
 
 	function updateAnswer(mistakeId: string, value: string) {
@@ -107,7 +120,7 @@ export default function Mistakes() {
 							<form className="repair-form" onSubmit={(event) => repair(event, mistake)}>
 								<textarea
 									value={answers[mistake.id] ?? ''}
-									disabled={mistake.status === 'repaired'}
+									disabled={mistake.status === 'repaired' || checking[mistake.id]}
 									onChange={(event) => updateAnswer(mistake.id, event.target.value)}
 									placeholder="Type the repaired Italian sentence..."
 									rows={3}
@@ -125,12 +138,13 @@ export default function Mistakes() {
 									<button
 										className="btn btn-primary"
 										type="submit"
-										disabled={mistake.status === 'repaired'}>
+										disabled={mistake.status === 'repaired' || checking[mistake.id]}>
 										<Play size={18} />
-										Check repair
+										{checking[mistake.id] ? 'Checking…' : 'Check repair'}
 									</button>
 								</div>
 							</form>
+							{errors[mistake.id] && <p role="alert">{errors[mistake.id]}</p>}
 							{feedback[mistake.id] && (
 								<div
 									className={

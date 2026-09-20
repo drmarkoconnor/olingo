@@ -62,6 +62,8 @@ import {
 	scheduleExerciseReview,
 } from '@/learning/scheduler'
 import { apiFetch } from '@/lib/api'
+import { AssessmentUnavailableError, isSemanticAssessment } from './assessment-contract'
+export { AssessmentUnavailableError } from './assessment-contract'
 import {
 	levelForDifficulty,
 	selectLevelBalanced,
@@ -72,6 +74,7 @@ import {
 	type ExerciseState,
 	type MistakeItem,
 	type SkillState,
+	type SpeechEvidence,
 } from '@/storage/db'
 import { addDays } from '@/utils/time'
 
@@ -519,6 +522,16 @@ function applyComplexityLadder(
 	})
 }
 
+async function previouslyAssessedAttempt(userId: string, attemptId: string | undefined, item: SprintItem) {
+	if (!attemptId) return null
+	const log = await db.exerciseLogs.where('userId').equals(userId)
+		.filter((entry) => entry.attemptId === attemptId).first()
+	if (!log?.assessment) return null
+	if (log.exerciseId !== item.exercise.id) throw new Error('This recording has already been assessed for another prompt.')
+	const updated = await db.exerciseStates.get([userId, item.exercise.id]) ?? item.state
+	return { result: log.assessment, updated }
+}
+
 export async function submitExerciseAnswer(args: {
 	userId: string
 	item: SprintItem
@@ -531,11 +544,15 @@ export async function submitExerciseAnswer(args: {
 	wordBankUsed?: boolean
 	spokenFirst?: boolean
 	spoken?: boolean
+	attemptId?: string
+	speechEvidence?: SpeechEvidence
 	responseLatencyMs?: number
 	utteranceDurationMs?: number
 	mode?: string
 	msUsed: number
 }) {
+	const previous = await previouslyAssessedAttempt(args.userId, args.attemptId, args.item)
+	if (previous) return previous
 	const result = await evaluateExerciseAnswer(
 		args.item.exercise,
 		args.answer,
@@ -556,65 +573,72 @@ export async function submitExerciseAnswer(args: {
 	}
 	const updated = scheduleExerciseReview(args.item.state, result.outcome)
 
-	await db.exerciseStates.put(updated)
-	if (exerciseIsGenerated(args.item.exercise)) {
-		await recordGeneratedExerciseUse(args.userId, args.item.exercise.id)
-	}
-	await db.exerciseLogs.add({
-		userId: args.userId,
-		exerciseId: args.item.exercise.id,
-		ts: new Date().toISOString(),
-		outcome: result.outcome,
-		correct: result.communicative && outcomeIsCorrect(result.outcome) ? 1 : 0,
-		communicative: result.communicative ? 1 : 0,
-		msUsed: args.msUsed,
-		hintsUsed: args.hintsUsed,
-		conceptHintsUsed: args.conceptHintsUsed ?? args.hintsUsed,
-		wordBankUsed: args.wordBankUsed ? 1 : 0,
-		spokenFirst: args.spokenFirst ? 1 : 0,
-		phase: args.item.focusPhase ?? getExercisePhase(args.item.exercise),
-		action: getExerciseAction(args.item.exercise),
-		mode: args.mode ?? 'sentence',
-		skillId: args.item.skillId ?? deriveSkillId(args.item.exercise),
-		phraseFamily: args.item.exercise.phraseFamily,
-		vocabDomain: args.item.exercise.vocabDomain,
-		complexityStep: args.item.complexityStep,
-		cueMode: args.item.cueMode,
-		responseLatencyMs: args.responseLatencyMs ?? args.msUsed,
-		utteranceDurationMs: args.utteranceDurationMs ?? 0,
-		spoken: args.spoken ? 1 : 0,
-		answer: args.answer,
+	return db.transaction('rw', [db.exerciseStates, db.generatedExercises, db.exerciseLogs, db.skillStates, db.skillAttempts, db.misspellings, db.mistakes], async () => {
+		// Recheck after acquiring the write transaction: two tabs may have assessed concurrently.
+		const concurrent = await previouslyAssessedAttempt(args.userId, args.attemptId, args.item)
+		if (concurrent) return concurrent
+		await db.exerciseStates.put(updated)
+		if (exerciseIsGenerated(args.item.exercise)) {
+			await recordGeneratedExerciseUse(args.userId, args.item.exercise.id)
+		}
+		await db.exerciseLogs.add({
+			userId: args.userId,
+			exerciseId: args.item.exercise.id,
+			ts: new Date().toISOString(),
+			outcome: result.outcome,
+			correct: result.communicative && outcomeIsCorrect(result.outcome) ? 1 : 0,
+			communicative: result.communicative ? 1 : 0,
+			msUsed: args.msUsed,
+			hintsUsed: args.hintsUsed,
+			conceptHintsUsed: args.conceptHintsUsed ?? args.hintsUsed,
+			wordBankUsed: args.wordBankUsed ? 1 : 0,
+			spokenFirst: args.spokenFirst ? 1 : 0,
+			phase: args.item.focusPhase ?? getExercisePhase(args.item.exercise),
+			action: getExerciseAction(args.item.exercise),
+			mode: args.mode ?? 'sentence',
+			skillId: args.item.skillId ?? deriveSkillId(args.item.exercise),
+			phraseFamily: args.item.exercise.phraseFamily,
+			vocabDomain: args.item.exercise.vocabDomain,
+			complexityStep: args.item.complexityStep,
+			cueMode: args.item.cueMode,
+			responseLatencyMs: args.responseLatencyMs ?? (args.spoken ? undefined : args.msUsed),
+			utteranceDurationMs: args.utteranceDurationMs,
+			spoken: args.spoken ? 1 : 0,
+			answer: args.answer,
+			attemptId: args.attemptId,
+			assessment: result,
+			speechEvidence: args.speechEvidence,
+		})
+
+		await recordSkillAttempt({
+			userId: args.userId,
+			exercise: args.item.exercise,
+			targetLevel:
+				args.targetLevel ??
+				args.item.exercise.cefrLevel ??
+				levelForDifficulty(args.item.exercise.difficulty),
+			focus: args.sessionFocus ?? 'adaptive',
+			domain: args.sessionDomain ?? 'mixed',
+			complexityStep: args.item.complexityStep ?? 3,
+			cueMode: args.item.cueMode ?? 'english',
+			communicative: result.communicative,
+			accepted: result.accepted,
+			hintsUsed: args.hintsUsed,
+			wordBankUsed: Boolean(args.wordBankUsed),
+			spoken: Boolean(args.spoken),
+			responseLatencyMs: args.responseLatencyMs ?? (args.spoken ? 0 : args.msUsed),
+			utteranceDurationMs: args.utteranceDurationMs,
+		})
+
+		if (result.spellingIssues.length > 0) {
+			await upsertMisspellings(args.userId, args.item.exercise, result.spellingIssues)
+		}
+
+		if (!result.accepted) {
+			await upsertMistake(args.userId, args.item.exercise, args.answer, result)
+		}
+		return { result, updated }
 	})
-
-	await recordSkillAttempt({
-		userId: args.userId,
-		exercise: args.item.exercise,
-		targetLevel:
-			args.targetLevel ??
-			args.item.exercise.cefrLevel ??
-			levelForDifficulty(args.item.exercise.difficulty),
-		focus: args.sessionFocus ?? 'adaptive',
-		domain: args.sessionDomain ?? 'mixed',
-		complexityStep: args.item.complexityStep ?? 3,
-		cueMode: args.item.cueMode ?? 'english',
-		communicative: result.communicative,
-		accepted: result.accepted,
-		hintsUsed: args.hintsUsed,
-		wordBankUsed: Boolean(args.wordBankUsed),
-		spoken: Boolean(args.spoken),
-		responseLatencyMs: args.responseLatencyMs ?? args.msUsed,
-		utteranceDurationMs: args.utteranceDurationMs,
-	})
-
-	if (result.spellingIssues.length > 0) {
-		await upsertMisspellings(args.userId, args.item.exercise, result.spellingIssues)
-	}
-
-	if (!result.accepted) {
-		await upsertMistake(args.userId, args.item.exercise, args.answer, result)
-	}
-
-	return { result, updated }
 }
 
 export function exerciseContractIssue(exercise: Exercise) {
@@ -681,16 +705,17 @@ async function evaluateExerciseAnswer(
 			errorTags: [],
 		}
 	}
-	if (typeof window === 'undefined') return fallback
 
 	try {
 		const response = await apiFetch('/api/evaluate-answer', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ exercise, answer, context }),
+			signal: AbortSignal.timeout(30_000),
 		})
-		if (!response.ok) return fallback
-		const data = (await response.json()) as Partial<EvaluationResult>
+		if (!response.ok) throw new AssessmentUnavailableError()
+		const data: unknown = await response.json()
+		if (!isSemanticAssessment(data) || (data as unknown as { provider?: string }).provider !== 'openai') throw new AssessmentUnavailableError()
 		const exerciseValid = data.exerciseValid !== false
 		if (!exerciseValid) {
 			return {
@@ -711,39 +736,30 @@ async function evaluateExerciseAnswer(
 		}
 		const accepted = Boolean(data.accepted)
 		const communicative = Boolean(data.communicative)
-		const spellingOnly = data.spellingOnly ?? fallback.spellingOnly
+		// Never borrow token-comparison errors or spelling guesses from a stored model answer.
+		// A semantic assessor may accept a completely different, natural formulation.
+		const spellingOnly = !accepted && data.errorTags.length > 0 &&
+			data.errorTags.every((tag) => tag === 'spelling' || tag === 'orthography')
 		const merged = {
-			...fallback,
 			...data,
 			exerciseValid: true,
 			invalidReason: '',
 			accepted,
 			communicative,
-			close: data.close ?? (!accepted && communicative),
+			close: !accepted && communicative,
 			spellingOnly,
-			outcome:
-				data.outcome ??
-				evaluationOutcomeForJudgment(
-					{ accepted, communicative, spellingOnly },
-					hintsUsed,
-					msUsed
-				),
-			normalisedAnswer: data.normalisedAnswer ?? fallback.normalisedAnswer,
+			outcome: evaluationOutcomeForJudgment({ accepted, communicative, spellingOnly }, hintsUsed, msUsed),
+			normalisedAnswer: fallback.normalisedAnswer,
 			message: '',
-			errorTags: data.errorTags ?? fallback.errorTags,
-			spellingIssues: data.spellingIssues ?? fallback.spellingIssues,
-			repairPrompts: data.repairPrompts ?? fallback.repairPrompts,
-			correctedItalian: data.correctedItalian ?? fallback.correctedItalian,
-			meaning: data.meaning ?? fallback.meaning,
-			shortFeedback: data.shortFeedback ?? fallback.shortFeedback,
-			confidence: data.confidence ?? fallback.confidence,
+			spellingIssues: [],
 		} satisfies EvaluationResult
 		return {
 			...merged,
 			message: evaluationHeadline(merged),
 		}
-	} catch {
-		return fallback
+	} catch (error) {
+		if (error instanceof AssessmentUnavailableError) throw error
+		throw new AssessmentUnavailableError()
 	}
 }
 
@@ -785,10 +801,10 @@ async function upsertMistake(
 		sceneId: exercise.sceneId,
 		promptEnglish: exercise.promptEnglish,
 		userAnswer: answer,
-		correctedItalian: exercise.targetItalian,
+		correctedItalian: result.correctedItalian,
 		tags: result.errorTags,
-		explanation: buildExplanation(exercise),
-		repairPrompts: getExerciseRepairPrompts(exercise).slice(
+		explanation: result.shortFeedback || buildExplanation(exercise),
+		repairPrompts: (result.repairPrompts.length ? result.repairPrompts : getExerciseRepairPrompts(exercise)).slice(
 			0,
 			maxRepairPromptsPerConstruction
 		),
@@ -846,6 +862,7 @@ export async function submitMistakeRepair(args: {
 			action: 'Repair',
 		}
 	)
+	if (!result.exerciseValid) return { result, updated: args.mistake }
 	const repaired = result.communicative
 	const currentStep = args.mistake.repairStep ?? 0
 	const nextStep = repaired ? currentStep + 1 : 0
@@ -865,23 +882,25 @@ export async function submitMistakeRepair(args: {
 		attempts: args.mistake.attempts + 1,
 		lastRepairAnswer: args.answer,
 	}
-	await db.mistakes.put(updated)
-	await db.exerciseLogs.add({
-		userId: args.userId,
-		exerciseId: args.mistake.exerciseId,
-		ts: new Date().toISOString(),
-		outcome: result.outcome,
-		correct: result.communicative ? 1 : 0,
-		communicative: result.communicative ? 1 : 0,
-		msUsed: args.msUsed,
-		hintsUsed: 0,
-		conceptHintsUsed: 0,
-		wordBankUsed: 0,
-		spokenFirst: 1,
-		phase: 'repair',
-		action: 'Repair',
-		mode: 'mistake-repair',
-		answer: args.answer,
+	await db.transaction('rw', db.mistakes, db.exerciseLogs, async () => {
+		await db.mistakes.put(updated)
+		await db.exerciseLogs.add({
+			userId: args.userId,
+			exerciseId: args.mistake.exerciseId,
+			ts: new Date().toISOString(),
+			outcome: result.outcome,
+			correct: result.communicative ? 1 : 0,
+			communicative: result.communicative ? 1 : 0,
+			msUsed: args.msUsed,
+			hintsUsed: 0,
+			conceptHintsUsed: 0,
+			wordBankUsed: 0,
+			spokenFirst: 1,
+			phase: 'repair',
+			action: 'Repair',
+			mode: 'mistake-repair',
+			answer: args.answer,
+		})
 	})
 	return { result, updated }
 }
@@ -922,6 +941,14 @@ export async function getFluencySnapshot(userId: string) {
 	const medianResponseLatencyMs = responseLatencies.length
 		? responseLatencies[Math.floor(responseLatencies.length / 2)]
 		: 0
+	const measuredSkillLatencies = new Map<string, number[]>()
+	for (const attempt of skillAttempts) {
+		if (attempt.spoken && Number.isFinite(attempt.responseLatencyMs) && attempt.responseLatencyMs > 0) {
+			const samples = measuredSkillLatencies.get(attempt.skillId) ?? []
+			samples.push(attempt.responseLatencyMs)
+			measuredSkillLatencies.set(attempt.skillId, samples)
+		}
+	}
 	const unassistedSuccesses = skillAttempts.filter(
 		(attempt) => attempt.unassisted && attempt.targetAccurate
 	).length
@@ -1055,8 +1082,8 @@ export async function getFluencySnapshot(userId: string) {
 				stage: skill.masteryStage,
 				attempts: skill.attempts,
 				contexts: skill.contexts.length,
-				averageResponseLatencyMs: skill.spokenAttempts
-					? Math.round(skill.totalResponseLatencyMs / skill.spokenAttempts)
+				averageResponseLatencyMs: measuredSkillLatencies.has(skill.skillId)
+					? Math.round(measuredSkillLatencies.get(skill.skillId)!.reduce((sum, value) => sum + value, 0) / measuredSkillLatencies.get(skill.skillId)!.length)
 					: 0,
 			})),
 		conceptHints: logs.reduce(

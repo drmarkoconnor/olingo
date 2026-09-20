@@ -1,6 +1,6 @@
 import { getStore } from '@netlify/blobs'
 import { authFailed, requireUser } from './_shared/auth'
-import { deterministicEvaluation } from './_shared/evaluate'
+import { assessmentUnavailableMessage } from '../../src/learning/assessment-contract'
 import { evaluateWithOpenAI } from './_shared/openai'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
@@ -38,14 +38,16 @@ export default async (req: Request) => {
 		return json({ error: 'Missing exercise or answer' }, { status: 400 })
 	}
 
-	const fallback = deterministicEvaluation(body.exercise, body.answer)
-	const ai = await evaluateWithOpenAI({
+	const result = await evaluateWithOpenAI({
 		exercise: body.exercise,
 		answer: body.answer,
 		context: body.context,
-		fallback,
 	})
-	const result = ai ?? fallback
+	if (!result) {
+		return json({ status: 'unassessed', error: assessmentUnavailableMessage }, { status: 503 })
+	}
+
+	if (result.accepted) result.correctedItalian = body.answer.trim()
 
 	if (result.exerciseValid !== false && !result.accepted) {
 		const store = getStore({ name: 'mistake-ledger' })
@@ -58,10 +60,12 @@ export default async (req: Request) => {
 			answer: body.answer,
 			result,
 			context: body.context,
+		}).catch(() => {
+			console.warn('Assessment completed but the remote mistake ledger was unavailable.')
 		})
 	}
 
-	return json({ ...result, provider: ai ? 'openai' : 'deterministic' })
+	return json({ ...result, provider: 'openai', status: 'assessed' })
 }
 
 export const config = {

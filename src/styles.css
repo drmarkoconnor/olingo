@@ -2102,6 +2102,30 @@ input[type='number']:focus {
 	white-space: nowrap;
 }
 
+.recorder-timing {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.recorder-meter { width: 110px; height: 18px; }
+
+.speech-review {
+	margin: 14px 0;
+	padding: 16px;
+	border: 1px solid #b6d8c4;
+	border-radius: 14px;
+	background: #f3faf5;
+}
+
+.speech-review audio { width: 100%; max-width: 560px; }
+.speech-review p { margin: 8px 0; line-height: 1.5; }
+.speech-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.feedback-model details { margin-top: 10px; }
+.feedback-model summary { cursor: pointer; font-size: 14px; }
+
 .btn-recording {
 	border-color: #b52f2f;
 	background: #d64545;

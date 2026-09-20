@@ -13,9 +13,8 @@ import {
 	Route,
 	Volume2,
 } from 'lucide-react'
-import SentenceVoiceRecorder, {
-	type VoiceRecording,
-} from '@/components/SentenceVoiceRecorder'
+import SentenceVoiceRecorder from '@/components/SentenceVoiceRecorder'
+import { useSentenceSpeech } from '@/hooks/useSentenceSpeech'
 import { cefrLevels } from '@/learning/content'
 import type { EvaluationResult } from '@/learning/evaluator'
 import {
@@ -30,11 +29,10 @@ import {
 	scheduleMemoryAnchorReview,
 	type MemoryAnchorRef,
 } from '@/learning/memory-house'
-import { submitExerciseAnswer, type SprintItem } from '@/learning/progress'
+import { AssessmentUnavailableError, submitExerciseAnswer, type SprintItem } from '@/learning/progress'
 import { createExerciseState } from '@/learning/scheduler'
-import { apiFetch, friendlyApiError } from '@/lib/api'
 import { speak } from '@/lib/tts'
-import { db, type ExerciseState } from '@/storage/db'
+import { db, type ExerciseState, type SpeakingDraft } from '@/storage/db'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
 
@@ -91,7 +89,10 @@ export default function MemoryHouse() {
 	const [feedback, setFeedback] = useState<MemoryFeedback | null>(null)
 	const [hintVisible, setHintVisible] = useState(false)
 	const [checking, setChecking] = useState(false)
-	const [speechLoading, setSpeechLoading] = useState(false)
+	const [recorderActive, setRecorderActive] = useState(false)
+	const speechPlaybackRef = useRef<HTMLAudioElement | null>(null)
+	const [retryVersion, setRetryVersion] = useState(0)
+	const gradeInFlight = useRef(false)
 	const [speechError, setSpeechError] = useState<string | null>(null)
 	const [routeComplete, setRouteComplete] = useState(false)
 	const [completionKind, setCompletionKind] = useState<PracticeMode>('route')
@@ -108,6 +109,13 @@ export default function MemoryHouse() {
 	}, [anchorIndex, roomIndex])
 	const current = mode === 'review' ? reviewQueue[reviewIndex] ?? routeRef : routeRef
 	const currentId = memoryExerciseId(current.room.id, current.anchor.id)
+	const speech = useSentenceSpeech({
+		userId, exerciseId: ready ? currentId : undefined,
+		resetKey: `${currentId}:${mode}:${targetLevel}:${retryVersion}`,
+		onTranscript: setAnswer, hintsUsed: hintVisible ? 1 : 0, wordBankUsed: false,
+	})
+	const interactionBusy = checking || recorderActive || speech.loading
+	useEffect(() => { if (speech.draft) setPhase('recall') }, [speech.draft?.attemptId])
 	const currentState = states.get(currentId)
 	const due = useMemo(() => dueMemoryAnchors(states), [states])
 	const statusCounts = useMemo(() => {
@@ -193,6 +201,7 @@ export default function MemoryHouse() {
 	}
 
 	function retryRecall() {
+		setRetryVersion((value) => value + 1)
 		setAnswer('')
 		setFeedback(null)
 		setHintVisible(false)
@@ -244,9 +253,10 @@ export default function MemoryHouse() {
 
 	async function submitCandidate(
 		candidate: string,
-		voice?: { responseLatencyMs: number; utteranceDurationMs: number }
+		voice?: SpeakingDraft
 	) {
-		if (!candidate.trim() || checking) return
+		if (!candidate.trim() || gradeInFlight.current || interactionBusy || !speech.ready || feedback) return
+		gradeInFlight.current = true
 		setChecking(true)
 		setSpeechError(null)
 		try {
@@ -270,20 +280,26 @@ export default function MemoryHouse() {
 				targetLevel,
 				sessionFocus: 'vocabulary',
 				sessionDomain: current.room.domain,
-				hintsUsed: hintVisible ? 1 : 0,
-				conceptHintsUsed: hintVisible ? 1 : 0,
+				hintsUsed: Math.max(hintVisible ? 1 : 0, voice?.hintsUsed ?? 0),
+				conceptHintsUsed: Math.max(hintVisible ? 1 : 0, voice?.hintsUsed ?? 0),
 				wordBankUsed: false,
 				spokenFirst: Boolean(voice),
 				spoken: Boolean(voice),
-				responseLatencyMs: voice?.responseLatencyMs ?? msUsed,
-				utteranceDurationMs: voice?.utteranceDurationMs,
+				responseLatencyMs: voice ? undefined : msUsed,
+				utteranceDurationMs: voice?.utteranceDurationMs ?? undefined,
+				attemptId: voice?.attemptId,
+				speechEvidence: voice ? {
+					rawTranscript: voice.rawTranscript, confirmedTranscript: candidate.trim(),
+					recordingDurationMs: voice.recordingDurationMs, speechOnsetMs: voice.responseLatencyMs,
+					utteranceDurationMs: voice.utteranceDurationMs, timingBasis: voice.timingBasis,
+				} : undefined,
 				mode: 'memory-house',
 				msUsed,
 			})
-			const memoryUpdated = scheduleMemoryAnchorReview(
+			const memoryUpdated = submission.result.exerciseValid ? scheduleMemoryAnchorReview(
 				submission.updated,
 				submission.result.communicative
-			)
+			) : submission.updated
 			await db.exerciseStates.put(memoryUpdated)
 			setStates((previous) => {
 				const next = new Map(previous)
@@ -297,57 +313,20 @@ export default function MemoryHouse() {
 				meaning: current.anchor.english,
 				msUsed,
 			})
+			if (voice) await speech.clearAfterAssessment().catch(() => setSpeechError('Your answer was assessed, but the saved recording could not be cleared.'))
+		} catch (cause) {
+			setSpeechError(cause instanceof AssessmentUnavailableError
+				? 'Assessment is unavailable. Your answer is kept; retry when connected. Nothing has been marked.'
+				: 'Could not finish assessing or saving this answer. Please keep this page open and try again.')
 		} finally {
+			gradeInFlight.current = false
 			setChecking(false)
-		}
-	}
-
-	async function handleRecording(recording: VoiceRecording) {
-		if (feedback || speechLoading) return
-		setSpeechLoading(true)
-		setSpeechError(null)
-		try {
-			const form = new FormData()
-			form.append('audio', recording.audio, 'olingo-memory-house.webm')
-			form.append('context', `${current.room.title}, ${current.room.theme}`)
-			form.append('skillId', `memory-house:${current.room.id}`)
-			form.append('responseLatencyMs', String(recording.responseLatencyMs))
-			form.append('utteranceDurationMs', String(recording.utteranceDurationMs))
-			const response = await apiFetch('/api/transcribe-speech', {
-				method: 'POST',
-				body: form,
-			})
-			const data = (await response.json().catch(() => null)) as {
-				transcript?: string
-				error?: string
-			} | null
-			if (!response.ok || !data?.transcript) {
-				throw new Error(
-					friendlyApiError(
-						response.status,
-						data?.error,
-						'Speech could not be checked. Type the phrase instead.'
-					)
-				)
-			}
-			await submitCandidate(data.transcript, {
-				responseLatencyMs: recording.responseLatencyMs,
-				utteranceDurationMs: recording.utteranceDurationMs,
-			})
-		} catch (error) {
-			setSpeechError(
-				error instanceof Error
-					? error.message
-					: 'Speech could not be checked. Type the phrase instead.'
-			)
-		} finally {
-			setSpeechLoading(false)
 		}
 	}
 
 	function handleSubmit(event: FormEvent) {
 		event.preventDefault()
-		void submitCandidate(answer)
+		void submitCandidate(answer, speech.draft ?? undefined)
 	}
 
 	if (!ready) {
@@ -385,7 +364,7 @@ export default function MemoryHouse() {
 				<button
 					className="btn btn-secondary"
 					type="button"
-					disabled={!due.length || mode === 'review'}
+					disabled={interactionBusy || !due.length || mode === 'review'}
 					onClick={startDueReview}>
 					<RotateCcw size={17} />
 					Review due{due.length ? ` (${due.length})` : ''}
@@ -400,7 +379,7 @@ export default function MemoryHouse() {
 							className={targetLevel === level ? 'active' : ''}
 							key={level}
 							type="button"
-							onClick={() => setTargetLevel(level)}>
+							disabled={interactionBusy} onClick={() => setTargetLevel(level)}>
 							{level}
 						</button>
 					))}
@@ -424,7 +403,7 @@ export default function MemoryHouse() {
 							key={room.id}
 							type="button"
 							title={room.title}
-							onClick={() => chooseRoom(index)}>
+							disabled={interactionBusy} onClick={() => chooseRoom(index)}>
 							{index + 1}
 						</button>
 					)
@@ -434,7 +413,7 @@ export default function MemoryHouse() {
 			{mode === 'review' && (
 				<div className="memory-review-banner">
 					<span><Route size={17} /> Due review {reviewIndex + 1} of {reviewQueue.length}</span>
-					<button className="btn btn-quiet" type="button" onClick={leaveReview}>Return to route</button>
+					<button className="btn btn-quiet" type="button" disabled={interactionBusy} onClick={leaveReview}>Return to route</button>
 				</div>
 			)}
 
@@ -445,7 +424,7 @@ export default function MemoryHouse() {
 						<strong>{completionKind === 'review' ? 'Review complete' : 'You reached the end of the house'}</strong>
 						<span>The anchors will return according to your recall, not on every visit.</span>
 					</div>
-					<button className="btn btn-secondary" type="button" onClick={() => { setRouteComplete(false); chooseRoom(0) }}>
+					<button className="btn btn-secondary" type="button" disabled={interactionBusy} onClick={() => { setRouteComplete(false); chooseRoom(0) }}>
 						Start at the driveway
 					</button>
 				</section>
@@ -470,7 +449,7 @@ export default function MemoryHouse() {
 								type="button"
 								style={{ left: `${anchor.position.x}%`, top: `${anchor.position.y}%` }}
 								title={anchor.label}
-								onClick={() => { setMode('route'); setRoomIndex(current.roomIndex); setAnchorIndex(index) }}>
+								disabled={interactionBusy} onClick={() => { setMode('route'); setRoomIndex(current.roomIndex); setAnchorIndex(index) }}>
 								<MapPin size={18} />
 								<span>{index + 1}</span>
 							</button>
@@ -478,7 +457,7 @@ export default function MemoryHouse() {
 						<button
 							className="memory-room-arrow previous"
 							type="button"
-							disabled={current.roomIndex === 0}
+							disabled={interactionBusy || current.roomIndex === 0}
 							title="Previous room"
 							onClick={() => moveRoom(-1)}>
 							<ArrowLeft size={22} />
@@ -486,7 +465,7 @@ export default function MemoryHouse() {
 						<button
 							className="memory-room-arrow next"
 							type="button"
-							disabled={current.roomIndex === memoryRooms.length - 1}
+							disabled={interactionBusy || current.roomIndex === memoryRooms.length - 1}
 							title="Next room"
 							onClick={() => moveRoom(1)}>
 							<ArrowRight size={22} />
@@ -500,7 +479,7 @@ export default function MemoryHouse() {
 									className={current.anchorIndex === index ? 'active' : ''}
 									key={anchor.id}
 									type="button"
-									onClick={() => { setMode('route'); setRoomIndex(current.roomIndex); setAnchorIndex(index) }}>
+									disabled={interactionBusy} onClick={() => { setMode('route'); setRoomIndex(current.roomIndex); setAnchorIndex(index) }}>
 									<span>{index + 1}</span>
 									<strong>{anchor.label}</strong>
 									<small>{nextReviewLabel(state)}</small>
@@ -538,19 +517,29 @@ export default function MemoryHouse() {
 								<span className="memory-cue-kind">Situation cue · no word-for-word translation</span>
 							)}
 							<SentenceVoiceRecorder
-								busy={speechLoading}
-								disabled={Boolean(feedback) || checking}
-								promptStartedAt={promptStartedAtRef.current}
-								onRecording={handleRecording}
+								key={`${currentId}:${mode}:${targetLevel}:${retryVersion}`}
+								busy={speech.loading || checking}
+								disabled={Boolean(feedback) || checking || !speech.ready}
+								onActiveChange={(active) => { if (active) speechPlaybackRef.current?.pause(); setRecorderActive(active) }}
+								onRecording={speech.recording}
 							/>
-							{speechError && <p className="field-error">{speechError}</p>}
+							{speech.draft && <div className="speech-review">
+								<strong>Review what you said</strong>
+								{speech.audioUrl && <audio ref={speechPlaybackRef} controls={!recorderActive} src={speech.audioUrl} aria-label="Your recorded answer" />}
+								<p>Recording: {(speech.draft.recordingDurationMs / 1000).toFixed(1)} s. Check the transcript below before assessment. Timing starts with recording, not the prompt.</p>
+								{!feedback && <div className="memory-actions">
+									<button className="btn btn-secondary" type="button" disabled={interactionBusy} onClick={() => void speech.transcribe()}>Retry transcription</button>
+									<button className="btn btn-quiet" type="button" disabled={interactionBusy} onClick={() => void speech.discard()}>Discard recording</button>
+								</div>}
+							</div>}
+							{(speechError || speech.error) && <p className="field-error" role="alert">{speechError || speech.error}</p>}
 							<textarea
-								aria-label="Italian answer"
-								disabled={Boolean(feedback) || checking}
-								placeholder="Type the Italian you said..."
+								aria-label={speech.draft ? 'Confirm your Italian transcript' : 'Italian answer'}
+								disabled={Boolean(feedback) || interactionBusy || !speech.ready}
+								placeholder={speech.draft ? 'Correct any misheard words here…' : 'Type your Italian answer…'}
 								rows={4}
 								value={answer}
-								onChange={(event) => setAnswer(event.target.value)}
+								onChange={(event) => speech.editTranscript(event.target.value)}
 							/>
 							{hintVisible && (
 								<div className="memory-hint">
@@ -582,12 +571,12 @@ export default function MemoryHouse() {
 							<div className="memory-actions">
 								{!feedback ? (
 									<>
-										<button className="btn btn-secondary" type="button" disabled={hintVisible} onClick={() => setHintVisible(true)}>
+										<button className="btn btn-secondary" type="button" disabled={hintVisible || interactionBusy || !speech.ready} onClick={() => setHintVisible(true)}>
 											<Lightbulb size={18} /> Hint
 										</button>
-										<button className="btn btn-primary" type="submit" disabled={!answer.trim() || checking}>
+										<button className="btn btn-primary" type="submit" disabled={!answer.trim() || interactionBusy || !speech.ready}>
 											{checking ? <Loader2 className="spin" size={18} /> : <Check size={18} />}
-											Check recall
+											{speech.draft ? 'Confirm transcript and assess' : 'Check recall'}
 										</button>
 									</>
 								) : !feedback.result.communicative ? (

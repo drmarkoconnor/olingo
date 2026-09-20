@@ -1,5 +1,5 @@
 import { getEnv } from './env'
-import type { StructuredEvaluation } from './evaluate'
+import { isSemanticAssessment } from '../../../src/learning/assessment-contract'
 
 const evaluationSchema = {
 	type: 'object',
@@ -43,42 +43,44 @@ export async function evaluateWithOpenAI(payload: unknown) {
 	if (!apiKey) return null
 
 	const model = getEnv('OPENAI_MODEL') || 'gpt-5.4-mini'
-	const response = await fetch('https://api.openai.com/v1/responses', {
-		method: 'POST',
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			'Content-Type': 'application/json',
-		},
-		body: JSON.stringify({
-			model,
-			store: false,
-			input: [
-				{
-					role: 'system',
-					content:
-						'You evaluate a short spoken-style Italian learner response at the requested CEFR level and session focus. First audit the exercise itself: the visible English prompt, action, communicative function, Italian-speaker context, and model target must describe one coherent conversational turn. If they conflict, are unrelated, or leave the required meaning hidden, set exerciseValid=false, explain the defect briefly in invalidReason, and do not blame the learner. Otherwise set exerciseValid=true and invalidReason to an empty string. For a valid exercise, judge whether an Italian listener would understand the intended meaning before judging polish. Accept natural alternatives that preserve the prompt meaning; do not demand the model wording. If communicative but imperfect, say so kindly and correct only the highest-value issue. Check person, number, tense, modality, register, and time relationships carefully. Keep feedback brief enough for live conversation practice. Return only schema-valid JSON.',
-				},
-				{
-					role: 'user',
-					content: JSON.stringify(payload),
-				},
-			],
-			text: {
-				format: {
-					type: 'json_schema',
-					name: 'italian_answer_evaluation',
-					strict: true,
-					schema: evaluationSchema,
-				},
-			},
-		}),
-	})
-	if (!response.ok) return null
-	const data = await response.json()
-	const text = outputText(data)
-	if (!text) return null
 	try {
-		return JSON.parse(text) as StructuredEvaluation
+		const response = await fetch('https://api.openai.com/v1/responses', {
+			signal: AbortSignal.timeout(25_000),
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model,
+				store: false,
+				input: [
+					{
+						role: 'system',
+						content:
+							'You evaluate a short spoken-style Italian learner response at the requested CEFR level and session focus. First audit the exercise itself: the visible English prompt, action, communicative function, Italian-speaker context, and model target must describe one coherent conversational turn. If they conflict, are unrelated, or leave the required meaning hidden, set exerciseValid=false, explain the defect briefly in invalidReason, and do not blame the learner. Otherwise set exerciseValid=true and invalidReason to an empty string. For a valid exercise, judge whether an Italian listener would understand the intended meaning before judging polish. Accept natural alternatives that preserve the prompt meaning; do not demand the model wording. When accepting an answer, retain the learner\'s own wording in correctedItalian rather than substituting your preferred formulation. If communicative but imperfect, say so kindly and correct only the highest-value issue. Check person, number, tense, modality, register, and time relationships carefully. Keep feedback brief enough for live conversation practice. Return only schema-valid JSON.',
+					},
+					{
+						role: 'user',
+						content: JSON.stringify(payload),
+					},
+				],
+				text: {
+					format: {
+						type: 'json_schema',
+						name: 'italian_answer_evaluation',
+						strict: true,
+						schema: evaluationSchema,
+					},
+				},
+			}),
+		})
+		if (!response.ok) return null
+		const data = await response.json()
+		const text = outputText(data)
+		if (!text) return null
+		const parsed: unknown = JSON.parse(text)
+		return isSemanticAssessment(parsed) ? parsed : null
 	} catch {
 		return null
 	}

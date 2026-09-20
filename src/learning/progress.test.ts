@@ -14,6 +14,8 @@ import {
 	loadDailySprint,
 	quarantineExercise,
 	submitMistakeRepair,
+	submitExerciseAnswer,
+	AssessmentUnavailableError,
 	withMinimumComplexity,
 } from '@/learning/progress'
 import { db, type MistakeItem } from '@/storage/db'
@@ -27,6 +29,7 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.unstubAllGlobals()
+	vi.restoreAllMocks()
 })
 
 describe('daily sprint composition', () => {
@@ -464,6 +467,11 @@ describe('mistake repair', () => {
 			repairStep: 0,
 		}
 		await db.mistakes.put(mistake)
+		// Supply semantic judgements explicitly; offline token overlap must not grade repairs.
+		vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+			const { answer } = JSON.parse(init.body)
+			return Response.json(assessment({ accepted: answer !== 'ciao', communicative: answer !== 'ciao' }))
+		}))
 
 		const failed = await submitMistakeRepair({
 			userId,
@@ -502,5 +510,102 @@ describe('mistake repair', () => {
 		expect(finalRepair.updated.status).toBe('repaired')
 		expect(finalRepair.updated.repairStep).toBe(3)
 		expect(finalRepair.updated.nextDueAt).toBeNull()
+	})
+})
+
+
+function assessment(overrides: Record<string, unknown> = {}) {
+	return {
+		provider: 'openai', status: 'assessed', exerciseValid: true, invalidReason: '',
+		accepted: true, communicative: true, correctedItalian: 'Mi passi il pane, per favore?',
+		meaning: 'Please pass me the bread.', errorTags: [], shortFeedback: 'A natural alternative.',
+		repairPrompts: [], confidence: 0.95, ...overrides,
+	}
+}
+
+describe('semantic assessment failure isolation', () => {
+	async function submission() {
+		const [item] = await loadDailySprint(userId, 8, { generateFresh: false })
+		return { userId, item, answer: 'Mi passi il pane, per favore?', hintsUsed: 0, msUsed: 4000, spoken: true }
+	}
+
+	it.each([
+		['service outage', () => new Response('', { status: 503 })],
+		['missing fields', () => Response.json({ accepted: true })],
+		['wrong field types', () => Response.json(assessment({ accepted: 'yes' }))],
+		['old deterministic fallback', () => Response.json(assessment({ provider: 'deterministic' }))],
+		['invalid JSON', () => new Response('{')],
+	])('does not mutate any learner evidence after %s', async (_label, response) => {
+		const args = await submission()
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => response()))
+		await expect(submitExerciseAnswer(args)).rejects.toBeInstanceOf(AssessmentUnavailableError)
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.mistakes, db.misspellings]) {
+			expect(await table.count()).toBe(0)
+		}
+	})
+
+	it('rolls back local progress if a later evidence write fails, so a retry cannot double-score', async () => {
+		const args = await submission()
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		vi.spyOn(db.skillAttempts, 'add').mockRejectedValueOnce(new Error('Storage unavailable'))
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('Storage unavailable')
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.mistakes]) expect(await table.count()).toBe(0)
+	})
+
+	it('reuses an assessed recording after reload without another API call or progress increment', async () => {
+		const args = { ...await submission(), attemptId: 'retained-recording' }
+		const fetch = vi.fn(async () => Response.json(assessment()))
+		vi.stubGlobal('fetch', fetch)
+		const first = await submitExerciseAnswer(args)
+		const states = await db.exerciseStates.toArray()
+		const skills = await db.skillStates.toArray()
+		const second = await submitExerciseAnswer(args)
+		expect(second).toEqual(first)
+		expect(fetch).toHaveBeenCalledTimes(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(await db.skillAttempts.count()).toBe(1)
+		expect(await db.exerciseStates.toArray()).toEqual(states)
+		expect(await db.skillStates.toArray()).toEqual(skills)
+	})
+
+	it('serialises duplicate recording submissions from two tabs into one evidence write', async () => {
+		const args = { ...await submission(), attemptId: 'concurrent-recording' }
+		let calls = 0
+		let release!: () => void
+		const bothRequested = new Promise<void>((resolve) => { release = resolve })
+		vi.stubGlobal('fetch', vi.fn(async () => {
+			calls += 1
+			if (calls === 2) release()
+			await bothRequested
+			return Response.json(assessment())
+		}))
+		const [first, second] = await Promise.all([submitExerciseAnswer(args), submitExerciseAnswer(args)])
+		expect(second).toEqual(first)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(await db.skillAttempts.count()).toBe(1)
+		const [skill] = await db.skillStates.toArray()
+		expect(skill.attempts).toBe(1)
+	})
+
+	it('honours a valid alternative without inheriting model-answer spelling errors or invented latency', async () => {
+		const args = await submission()
+		args.item.exercise = { ...args.item.exercise, promptEnglish: 'Please pass me the bread.', targetItalian: 'Passami il pane, per favore.', acceptedItalian: [], action: 'Build', communicativeFunction: 'request' }
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		const { result } = await submitExerciseAnswer(args)
+		expect(result.accepted).toBe(true)
+		expect(result.correctedItalian).toBe(args.answer)
+		expect(result.spellingIssues).toEqual([])
+		expect(result.errorTags).toEqual([])
+		expect(await db.mistakes.count()).toBe(0)
+		expect(await db.misspellings.count()).toBe(0)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(log.answer).toBe(args.answer)
+		expect(log.responseLatencyMs).toBeUndefined()
+		const [state] = await db.skillStates.toArray()
+		expect(state.fastSpokenSuccesses).toBe(0)
 	})
 })

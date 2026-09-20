@@ -1,5 +1,6 @@
 import Dexie, { Table } from 'dexie'
 import type { CefrLevel, Exercise } from '@/learning/content'
+import type { EvaluationResult } from '@/learning/evaluator'
 import type {
 	ChallengeMode,
 	ComplexityStep,
@@ -54,6 +55,9 @@ export type ExerciseState = {
 }
 
 export type ExerciseLog = {
+	attemptId?: string
+	speechEvidence?: SpeechEvidence
+	assessment?: EvaluationResult
 	id?: number
 	userId: string
 	exerciseId: string
@@ -78,6 +82,32 @@ export type ExerciseLog = {
 	utteranceDurationMs?: number
 	spoken?: 0 | 1
 	answer: string
+}
+
+export type SpeechEvidence = {
+	rawTranscript: string
+	confirmedTranscript: string
+	recordingDurationMs: number
+	speechOnsetMs: number | null
+	utteranceDurationMs: number | null
+	timingBasis: 'recording-start'
+}
+
+export type SpeakingDraft = {
+	userId: string
+	exerciseId: string
+	attemptId: string
+	audio: Blob
+	transcript: string
+	rawTranscript: string
+	recordingDurationMs: number
+	responseLatencyMs: number | null
+	utteranceDurationMs: number | null
+	timingBasis: 'recording-start'
+	speechDetected: boolean | null
+	hintsUsed: number
+	wordBankUsed: boolean
+	updatedAt: string
 }
 
 export type SkillMasteryStage = 0 | 1 | 2 | 3 | 4 | 5
@@ -287,6 +317,7 @@ export type DailySessionItem = {
 }
 
 export class OlingoDB extends Dexie {
+	speakingDrafts!: Table<SpeakingDraft, [string, string]>
 	words!: Table<Word, string>
 	userCards!: Table<UserCard, [string, string]> // compound pk (userId+wordId)
 	reviewLogs!: Table<ReviewLog, number>
@@ -454,6 +485,9 @@ export class OlingoDB extends Dexie {
 				'&[userId+skillId], userId, skillId, focus, level, nextDueAt, masteryStage, archived, lastPracticedAt',
 			skillAttempts:
 				'++id, userId, skillId, exerciseId, ts, focus, level, cueMode, spoken',
+		})
+		this.version(10).stores({
+			speakingDrafts: '&[userId+exerciseId], userId, updatedAt',
 		})
 	}
 }
