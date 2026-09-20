@@ -69,6 +69,9 @@ describe('conversation frame matrix', () => {
 
 		expect(b2[0].cefrLevel).toBe('B2')
 		expect(c1[0].cefrLevel).toBe('C1')
+		const c2 = getGenerationFramesForWeek(1, { targetLevel: 'C2', limit: 4 })
+		expect(c2.every((frame) => frame.cefrLevel === 'C2')).toBe(true)
+		expect(c2.some((frame) => frame.tags.includes('mediation'))).toBe(true)
 		expect(c1.some((frame) => frame.tags.includes('reformulation'))).toBe(true)
 	})
 

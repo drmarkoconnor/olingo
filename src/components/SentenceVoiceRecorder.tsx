@@ -19,12 +19,14 @@ function preferredMimeType() {
 		.find((type) => MediaRecorder.isTypeSupported(type)) ?? ''
 }
 
-export default function SentenceVoiceRecorder({ busy, disabled, onRecording, onActiveChange }: {
+export default function SentenceVoiceRecorder({ busy, disabled, onRecording, onActiveChange, maxDurationMs = MAX_RECORDING_MS }: {
+	maxDurationMs?: number
 	busy: boolean
 	disabled: boolean
 	onRecording: (recording: VoiceRecording) => void
 	onActiveChange?: (active: boolean) => void
 }) {
+	const recordingLimit = Math.min(120_000, Math.max(10_000, maxDurationMs))
 	const [phase, setPhase] = useState<'idle' | 'starting' | 'recording' | 'stopping'>('idle')
 	const [error, setError] = useState<string | null>(null)
 	const [elapsedMs, setElapsedMs] = useState(0)
@@ -186,7 +188,7 @@ export default function SentenceVoiceRecorder({ busy, disabled, onRecording, onA
 				if (!current() || stoppedAt !== null) return
 				const elapsed = performance.now() - startedAt
 				setElapsedMs(elapsed)
-				if (elapsed >= MAX_RECORDING_MS) stop()
+				if (elapsed >= recordingLimit) stop()
 			}, 100)
 		} catch (recordingError) {
 			if (!current()) return
@@ -212,7 +214,7 @@ export default function SentenceVoiceRecorder({ busy, disabled, onRecording, onA
 			</button>
 			{recording && <div className="recorder-timing">
 				<span className="recording-status" role="status">Recording</span>
-				<strong aria-label="Recording duration">{(elapsedMs / 1000).toFixed(1)} s / 60 s</strong>
+				<strong aria-label="Recording duration">{(elapsedMs / 1000).toFixed(1)} s / {recordingLimit / 1000} s</strong>
 				{analysisAvailable ? <meter className="recorder-meter" aria-label="Microphone input level" min={0} max={100} value={level} /> : <span>Recording; input meter unavailable</span>}
 			</div>}
 			{error && <span className="field-error" role="alert">{error}</span>}

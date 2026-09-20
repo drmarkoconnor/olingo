@@ -1133,6 +1133,8 @@ export default function Study() {
 
 	if (!sessionConfirmed) {
 		return (
+			<>
+			<section className="course-recommendation"><p className="eyebrow">The conversation pathway</p><h2>Practise something you actually want to say.</h2><p>Everyday questions through nuanced discussion, across A1–C2. Three spoken turns at a time, with feedback on your own words.</p><Link className="btn btn-primary" to="/conversations">Explore conversations</Link></section>
 			<SessionLauncher
 				challengeMode={challengeMode}
 				dailyGoal={dailyGoal}
@@ -1145,6 +1147,7 @@ export default function Study() {
 				onStart={beginDailySession}
 				onTargetLevel={setTargetLevel}
 			/>
+			</>
 		)
 	}
 

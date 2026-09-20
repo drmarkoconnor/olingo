@@ -114,7 +114,7 @@ export function useSentenceSpeech({ userId, exerciseId, resetKey, onTranscript, 
 	async function recording(value: VoiceRecording) {
 		if (!exerciseId || inFlight.current) return
 		const next: SpeakingDraft = {
-			...value, userId, exerciseId, attemptId: crypto.randomUUID(),
+			...value, userId, exerciseId, attemptId: crypto.randomUUID(), recordedAt: new Date().toISOString(),
 			transcript: '', rawTranscript: '', hintsUsed, wordBankUsed, updatedAt: new Date().toISOString(),
 		}
 		draftRef.current = next

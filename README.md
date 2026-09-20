@@ -1,8 +1,10 @@
 # Olingo
 
 Olingo started as a mobile-first Italian vocabulary flashcard PWA. The current
-direction is now a more substantial A2-to-B1 Italian sentence-production game
-focused on fast, accurate typed construction for spoken conversation.
+direction combines an A1–C2 conversational practice pathway with sentence
+production, speech capture and spaced review. See the
+[conversation curriculum](docs/CONVERSATION-CURRICULUM.md) for its scope,
+pedagogy and evidence-based progression rules.
 
 The new foundation docs live in [docs/README.md](docs/README.md). They supersede
 the original flashcard-only PRD and should guide new product and engineering

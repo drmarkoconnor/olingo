@@ -43,6 +43,7 @@ const levelRank: Record<CefrLevel, number> = {
 	B1: 3,
 	B2: 4,
 	C1: 5,
+	C2: 6,
 }
 
 const sceneDomains: Record<string, VocabDomain[]> = {
@@ -304,6 +305,17 @@ const levelSpeechSeeds: Partial<Record<CefrLevel, VocabularySeed[]>> = {
 		['vale la pena distinguere', 'it is worth making a distinction', 'chunk', 'C1', 92],
 		['fino a prova contraria', 'until proven otherwise', 'chunk', 'C1', 90],
 		['mi permetto di dissentire', 'I beg to differ', 'chunk', 'C1', 90],
+	],
+	// These are resources for C2 tasks; knowing an isolated chunk is not evidence of C2 proficiency.
+	C2: [
+		['senza per questo', 'without thereby', 'chunk', 'C2', 96],
+		['fatte le debite distinzioni', 'with the necessary distinctions made', 'chunk', 'C2', 92],
+		['a scanso di equivoci', 'to avoid any misunderstanding', 'chunk', 'C2', 94],
+		['non me ne voglia', 'please do not take it amiss', 'chunk', 'C2', 90],
+		['su questo possiamo incontrarci', 'we can find common ground on this', 'chunk', 'C2', 94],
+		['tra le righe', 'between the lines', 'chunk', 'C2', 92],
+		['non è questo il nodo', 'that is not the crux of it', 'chunk', 'C2', 94],
+		['al netto delle differenze', 'allowing for the differences', 'chunk', 'C2', 92],
 	],
 }
 

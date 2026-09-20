@@ -591,6 +591,89 @@ describe('semantic assessment failure isolation', () => {
 		expect(skill.attempts).toBe(1)
 	})
 
+	it('commits canonical course evidence atomically and keeps it unchanged on retry', async () => {
+		const args = { ...await submission(), attemptId: 'course-attempt', hintsUsed: 1,
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'hesitant' as const },
+		}
+		const fetch = vi.fn(async () => Response.json(assessment()))
+		vi.stubGlobal('fetch', fetch)
+		await submitExerciseAnswer(args)
+		const original = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(original).toMatchObject({ userId, answer: args.answer, hintsUsed: 1, spoken: true, runId: 'run-one', atISO: log.ts })
+		expect(original?.assessment).toEqual(log.assessment)
+		await submitExerciseAnswer({ ...args, answer: 'A changed answer must not replace assessed speech.', spoken: false, hintsUsed: 0 })
+		expect(await db.courseAttempts.get(args.attemptId)).toEqual(original)
+		expect(await db.courseAttempts.count()).toBe(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(fetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('dates spoken retrieval from the recording, not a later assessment of its saved draft', async () => {
+		const yesterday = new Date(Date.now() - 86_400_000).toISOString()
+		const args = { ...await submission(), attemptId: 'restored-course-recording',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'fluent' as const, practicedAt: yesterday },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		await submitExerciseAnswer(args)
+		const saved = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(saved?.atISO).toBe(yesterday)
+		expect(Date.parse(log.ts)).toBeGreaterThan(Date.parse(yesterday) + 86_000_000)
+		expect(saved).not.toHaveProperty('practicedAt')
+	})
+
+	it.each([
+		['invalid date', true, 'not-a-date'],
+		['future date', true, '2099-01-01T00:00:00Z'],
+		['typed answer', false, '2020-01-01T00:00:00Z'],
+	])('does not use %s as delayed spoken practice evidence', async (_label, spoken, practicedAt) => {
+		const args = { ...await submission(), attemptId: 'invalid-practice-time', spoken,
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const, practicedAt },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		await submitExerciseAnswer(args)
+		const saved = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(saved?.atISO).toBe(log.ts)
+	})
+
+	it('rolls back general learning evidence when the course record cannot be saved', async () => {
+		const args = { ...await submission(), attemptId: 'course-write-failure',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const },
+		}
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		vi.spyOn(db.courseAttempts, 'add').mockRejectedValueOnce(new Error('Course storage unavailable'))
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('Course storage unavailable')
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.courseAttempts, db.mistakes]) expect(await table.count()).toBe(0)
+		await submitExerciseAnswer(args)
+		expect(await db.courseAttempts.count()).toBe(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+	})
+
+	it('does not write course evidence for an invalid prompt', async () => {
+		const args = { ...await submission(), attemptId: 'invalid-course-prompt',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'fluent' as const },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment({ exerciseValid: false, invalidReason: 'The cue contradicts its goal.', accepted: false, communicative: false }))))
+		const { result } = await submitExerciseAnswer(args)
+		expect(result.exerciseValid).toBe(false)
+		for (const table of [db.courseAttempts, db.exerciseLogs, db.skillAttempts]) expect(await table.count()).toBe(0)
+	})
+
+	it('requires a stable attempt identifier before evaluating a course answer', async () => {
+		const args = { ...await submission(),
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const },
+		}
+		const fetch = vi.fn()
+		vi.stubGlobal('fetch', fetch)
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('attempt identifier')
+		expect(fetch).not.toHaveBeenCalled()
+		expect(await db.courseAttempts.count()).toBe(0)
+	})
+
 	it('honours a valid alternative without inheriting model-answer spelling errors or invented latency', async () => {
 		const args = await submission()
 		args.item.exercise = { ...args.item.exercise, promptEnglish: 'Please pass me the bread.', targetItalian: 'Passami il pane, per favore.', acceptedItalian: [], action: 'Build', communicativeFunction: 'request' }

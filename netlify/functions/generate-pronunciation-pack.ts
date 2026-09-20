@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 
 type Body = {
 	level?: CefrLevel
@@ -25,13 +25,14 @@ type Passage = {
 	utilityScore: number
 }
 
-const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 const wordLimits: Record<CefrLevel, [number, number]> = {
 	A1: [7, 14],
 	A2: [10, 20],
 	B1: [14, 26],
 	B2: [16, 30],
 	C1: [16, 32],
+	C2: [16, 32],
 }
 
 const levelGuidance: Record<CefrLevel, string> = {
@@ -40,6 +41,7 @@ const levelGuidance: Record<CefrLevel, string> = {
 	B1: 'Two connected everyday ideas with a reason, event, plan, or practical pronoun.',
 	B2: 'Natural qualification, consequence, repair, comparison, or hypothetical planning.',
 	C1: 'Precise but conversational stance, reformulation, tact, or a carefully limited claim.',
+	C2: 'Express fine distinctions in attitude and implied meaning through natural register and emphasis, without obscure vocabulary.',
 }
 
 const passageSchema = {
@@ -174,7 +176,7 @@ async function generate(body: Body, level: CefrLevel, count: number) {
 							'Use food, family, sport, cafes, travel, home, health, culture, or ordinary plans.',
 							'Keep every passage within the exact word range.',
 							'Use only tense focuses permitted by the current program week.',
-							'At B2 and C1 increase pragmatic demand, not sentence length or obscurity.',
+							'At B2, C1 and C2 increase pragmatic demand, not sentence length or obscurity.',
 							'Avoid surreal, literary, political-jargon, textbook, and trivia sentences.',
 							'Do not repeat or closely paraphrase avoidTexts.',
 							'Give a brief English title and one practical English delivery cue.',

@@ -579,6 +579,42 @@ export const conversationFrames: ConversationFrame[] = [
 		slotHints: ['per quanto ne so', 'a quanto pare', 'salvo nuove informazioni'],
 		tags: ['qualification', 'news', 'stance'],
 	},
+	{
+		id: 'repair-culture-c2-implication', label: 'Repair An Unintended Implication',
+		communicativeFunction: 'repair', tenseFocus: 'present', vocabDomain: 'culture',
+		weeks: [1, 24], cefrLevels: ['C2'], maxWords: 12, utilityScore: 94,
+		seedEnglish: 'I question the method, not your good faith.',
+		seedItalian: 'Metto in discussione il metodo, non la tua buona fede.',
+		slotHints: ['mettere in discussione', 'distinguere intenzione ed effetto'],
+		tags: ['implication', 'register', 'repair'],
+	},
+	{
+		id: 'react-news-c2-mediate', label: 'Reconcile Competing Positions',
+		communicativeFunction: 'react', tenseFocus: 'present', vocabDomain: 'local-news',
+		weeks: [1, 24], cefrLevels: ['C2'], maxWords: 12, utilityScore: 93,
+		seedEnglish: 'You disagree about the means, not necessarily the aim.',
+		seedItalian: 'Divergete sui mezzi, non necessariamente sul fine.',
+		slotHints: ['divergere sui mezzi', 'individuare un punto di contatto'],
+		tags: ['mediation', 'synthesis', 'stance'],
+	},
+	{
+		id: 'ask-family-c2-understatement', label: 'Check An Implicit Reservation',
+		communicativeFunction: 'ask-back', tenseFocus: 'present', vocabDomain: 'family',
+		weeks: [1, 24], cefrLevels: ['C2'], maxWords: 12, utilityScore: 92,
+		seedEnglish: 'Is that a cautious yes or a tactful refusal?',
+		seedItalian: 'È un sì prudente o un modo garbato di rifiutare?',
+		slotHints: ['un sì prudente', 'un modo garbato'],
+		tags: ['inference', 'tact', 'interaction'],
+	},
+	{
+		id: 'react-home-c2-concession', label: 'Concede Without Endorsing The Premise',
+		communicativeFunction: 'react', tenseFocus: 'present', vocabDomain: 'home',
+		weeks: [1, 24], cefrLevels: ['C2'], maxWords: 12, utilityScore: 92,
+		seedEnglish: 'I concede the point without accepting the underlying assumption.',
+		seedItalian: 'Concedo il punto, senza per questo accettarne la premessa.',
+		slotHints: ['concedere il punto', 'accettarne la premessa'],
+		tags: ['concession', 'precision', 'stance'],
+	},
 ]
 
 const functionByAction: Record<string, CommunicativeFunction[]> = {
@@ -653,7 +689,7 @@ export function communicativeFunctionLabel(
 }
 
 function levelRank(level: CefrLevel) {
-	return ['A1', 'A2', 'B1', 'B2', 'C1'].indexOf(level)
+	return ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].indexOf(level)
 }
 
 function levelAllowed(frame: ConversationFrame, targetLevel?: CefrLevel) {

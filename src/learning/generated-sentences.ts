@@ -208,7 +208,7 @@ function defaultPhase(level: CefrLevel) {
 
 function defaultMaxWordsFor(level: CefrLevel, length?: SentenceLength) {
 	if (length === 'short') return 7
-	if (length === 'long' && (level === 'B1' || level === 'B2' || level === 'C1')) {
+	if (length === 'long' && (level === 'B1' || level === 'B2' || level === 'C1' || level === 'C2')) {
 		return 12
 	}
 	return 10

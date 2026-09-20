@@ -13,6 +13,7 @@ type Body = {
 		tags?: string[]
 		repairPrompts?: string[]
 		action?: string
+		evaluationMode?: 'meaning' | 'open-goal'
 		communicativeGoal?: string
 		communicativeFunction?: string
 		npcLine?: string

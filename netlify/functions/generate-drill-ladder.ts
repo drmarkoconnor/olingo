@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 type DrillFamilyId =
 	| 'doing-making'
 	| 'modal-engine'
@@ -92,7 +92,7 @@ type DrillHistory = {
 	updatedAt?: string
 }
 
-const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 const focuses: DrillFocus[] = [
 	'guided',
 	'forms',
@@ -344,6 +344,7 @@ function levelGuidance(level: CefrLevel) {
 	if (level === 'A2') return 'Everyday modals, practical pronouns, and simple completed past forms.'
 	if (level === 'B1') return 'Independent short replies, useful tense changes, and common pronoun combinations.'
 	if (level === 'B2') return 'Greater pragmatic precision and flexible transformations, without longer sentences.'
+	if (level === 'C2') return 'Distinguish implicit intent, idiomatic register, fine shades of meaning and diplomatic reformulation in compact responses.'
 	return 'Natural adult precision, register control, and rapid reformulation, without literary obscurity.'
 }
 
@@ -413,7 +414,7 @@ async function generatePrompts(args: {
 						'Use the stagePlan in exactly this order, with one output item per entry.',
 						'Every English cue must be a precise translation of the Italian target, including person, tense, pronouns, and time.',
 						'Use natural modern spoken Italian with correct accents and apostrophes.',
-						'Keep each target to 4-10 Italian words; allow 12 only when essential at B1-C1.',
+						'Keep each target to 4-10 Italian words; allow 12 only when essential at B1-C2.',
 						'Use common adult situations involving food, family, sport, cafes, shopping, travel, home, health, or culture.',
 						'Do not use surreal, abstract, literary, childish, or classroom-only sentences.',
 						'A higher CEFR level means less support and more flexible operations, not rarer vocabulary or longer targets.',

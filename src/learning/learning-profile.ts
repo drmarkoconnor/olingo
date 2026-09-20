@@ -2,7 +2,7 @@ import type { CefrLevel, ExerciseDifficulty } from '@/learning/content'
 
 export type LevelBand = 'consolidation' | 'target' | 'stretch'
 
-export const cefrOrder: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+export const cefrOrder: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
 const profileGuidance: Record<CefrLevel, string> = {
 	A1: 'Direct everyday needs, present tense, simple questions, and memorisable chunks.',
@@ -10,6 +10,7 @@ const profileGuidance: Record<CefrLevel, string> = {
 	B1: 'Connected everyday speech with reasons, narration, plans, and practical pronouns.',
 	B2: 'Natural qualification, comparison, consequence, hypothetical planning, and repair.',
 	C1: 'Precise stance, reformulation, tactful disagreement, and flexible adult register.',
+	C2: 'Interpret implication, mediate competing positions, repair ambiguity and shift register precisely; difficulty comes from context, not length.',
 }
 
 const profileWordRanges: Record<CefrLevel, [number, number]> = {
@@ -18,6 +19,7 @@ const profileWordRanges: Record<CefrLevel, [number, number]> = {
 	B1: [5, 10],
 	B2: [5, 11],
 	C1: [5, 12],
+	C2: [5, 12],
 }
 
 export function cefrRank(level: CefrLevel) {
@@ -25,7 +27,7 @@ export function cefrRank(level: CefrLevel) {
 }
 
 export function levelForDifficulty(difficulty: ExerciseDifficulty): CefrLevel {
-	return cefrOrder[Math.max(0, Math.min(4, difficulty - 1))]
+	return cefrOrder[Math.max(0, Math.min(cefrOrder.length - 1, difficulty - 1))]
 }
 
 export function difficultyForCefr(level: CefrLevel): ExerciseDifficulty {
@@ -60,7 +62,7 @@ export function getLevelQuotas(targetLevel: CefrLevel, limit: number) {
 		const target = Math.max(1, Math.round(safeLimit * 0.85))
 		return { target, consolidation: 0, stretch: safeLimit - target }
 	}
-	if (targetLevel === 'C1') {
+	if (targetLevel === 'C2') {
 		const target = Math.max(1, Math.round(safeLimit * 0.75))
 		return { target, consolidation: safeLimit - target, stretch: 0 }
 	}

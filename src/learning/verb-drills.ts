@@ -80,6 +80,7 @@ const difficultyByLevel: Record<CefrLevel, ExerciseDifficulty> = {
 	B1: 3,
 	B2: 4,
 	C1: 5,
+	C2: 6,
 }
 
 const stageRank: Record<DrillStage, number> = {

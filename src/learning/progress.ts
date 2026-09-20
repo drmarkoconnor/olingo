@@ -1,3 +1,4 @@
+import type { CourseAttempt } from '@/learning/course-progress'
 import {
 	exercises,
 	getExercise,
@@ -215,7 +216,7 @@ export async function loadDailySprint(
 
 	const targetLevel = options.targetLevel ?? 'B1'
 	const targetDifficulty = difficultyForLevel(targetLevel)
-	const maxDifficulty = Math.min(5, targetDifficulty + 1)
+	const maxDifficulty = Math.min(6, targetDifficulty + 1)
 	const eligibleExerciseIds = new Set(
 		allExercises
 			.filter((exercise) => exercise.difficulty <= maxDifficulty)
@@ -549,8 +550,10 @@ export async function submitExerciseAnswer(args: {
 	responseLatencyMs?: number
 	utteranceDurationMs?: number
 	mode?: string
+	courseEvidence?: Pick<CourseAttempt, 'lessonId' | 'turnId' | 'variant' | 'flow'> & { runId: string; practicedAt?: string }
 	msUsed: number
 }) {
+	if (args.courseEvidence && !args.attemptId?.trim()) throw new Error('Conversation evidence requires an attempt identifier.')
 	const previous = await previouslyAssessedAttempt(args.userId, args.attemptId, args.item)
 	if (previous) return previous
 	const result = await evaluateExerciseAnswer(
@@ -573,10 +576,11 @@ export async function submitExerciseAnswer(args: {
 	}
 	const updated = scheduleExerciseReview(args.item.state, result.outcome)
 
-	return db.transaction('rw', [db.exerciseStates, db.generatedExercises, db.exerciseLogs, db.skillStates, db.skillAttempts, db.misspellings, db.mistakes], async () => {
+	return db.transaction('rw', [db.exerciseStates, db.generatedExercises, db.exerciseLogs, db.skillStates, db.skillAttempts, db.misspellings, db.mistakes, db.courseAttempts], async () => {
 		// Recheck after acquiring the write transaction: two tabs may have assessed concurrently.
 		const concurrent = await previouslyAssessedAttempt(args.userId, args.attemptId, args.item)
 		if (concurrent) return concurrent
+		const assessedAt = new Date().toISOString()
 		await db.exerciseStates.put(updated)
 		if (exerciseIsGenerated(args.item.exercise)) {
 			await recordGeneratedExerciseUse(args.userId, args.item.exercise.id)
@@ -584,7 +588,7 @@ export async function submitExerciseAnswer(args: {
 		await db.exerciseLogs.add({
 			userId: args.userId,
 			exerciseId: args.item.exercise.id,
-			ts: new Date().toISOString(),
+			ts: assessedAt,
 			outcome: result.outcome,
 			correct: result.communicative && outcomeIsCorrect(result.outcome) ? 1 : 0,
 			communicative: result.communicative ? 1 : 0,
@@ -636,6 +640,22 @@ export async function submitExerciseAnswer(args: {
 
 		if (!result.accepted) {
 			await upsertMistake(args.userId, args.item.exercise, args.answer, result)
+		}
+		if (args.courseEvidence) {
+			const { practicedAt, ...courseMetadata } = args.courseEvidence
+			const practiceTime = practicedAt ? Date.parse(practicedAt) : Number.NaN
+			const evidenceAt = args.spoken && Number.isFinite(practiceTime) && practiceTime <= Date.parse(assessedAt)
+				? new Date(practiceTime).toISOString() : assessedAt
+			// Commit the course record with the canonical assessment, never in a later UI
+			// write. A failed write rolls back all learning evidence and remains retryable.
+			await db.courseAttempts.add({
+				...courseMetadata,
+				id: args.attemptId!, userId: args.userId,
+				answer: args.answer, assessment: result,
+				accepted: result.accepted, communicative: result.communicative,
+				spoken: Boolean(args.spoken), hintsUsed: args.hintsUsed,
+				atISO: evidenceAt,
+			})
 		}
 		return { result, updated }
 	})

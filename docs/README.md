@@ -1,6 +1,8 @@
 # Olingo Foundation Docs
 
-These documents supersede the original flashcard-only PRD. The current product direction is a daily Italian sentence-production game for A2-to-B1 adult learners.
+These documents supersede the original flashcard-only PRD. The current product combines an A1–C2 conversational practice pathway with the earlier sentence-production and review tools.
+
+Start with [Conversation curriculum: A1–C2](CONVERSATION-CURRICULUM.md) for the current spoken pathway, evidence rules and limitations. The earlier documents below explain the original A2–B1 foundation.
 
 Read in this order:
 
@@ -11,7 +13,7 @@ Read in this order:
 5. [Architecture](architecture.md)
 6. [Implementation Roadmap](implementation-roadmap.md)
 
-Immediate build target:
+Original foundation milestones (historical):
 
 - Phase 1: Game Shell And Daily Sprint.
 - Start Phase 2: Sentence Forge typed-answer flow.

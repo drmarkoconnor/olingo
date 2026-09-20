@@ -10,7 +10,7 @@ function words(value: string) {
 
 describe('source transfer generation', () => {
 	it('provides three short fallback drills at every selected level', () => {
-		for (const level of ['A1', 'A2', 'B1', 'B2', 'C1'] as const) {
+		for (const level of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'] as const) {
 			const exercises = fallbackExercises(level)
 			expect(exercises).toHaveLength(3)
 			expect(exercises.every((exercise) => words(exercise.targetItalian) <= 12)).toBe(
