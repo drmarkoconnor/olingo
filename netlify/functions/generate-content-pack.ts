@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 
 type SourceItem = {
 	id: string
@@ -28,13 +28,14 @@ type SourceExercise = {
 	action: string
 }
 
-const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 const wordRanges: Record<CefrLevel, [number, number]> = {
 	A1: [3, 7],
 	A2: [4, 9],
 	B1: [5, 10],
 	B2: [5, 11],
 	C1: [5, 12],
+	C2: [5, 12],
 }
 
 const sourcePackSchema = {
@@ -187,6 +188,11 @@ export function fallbackExercises(level: CefrLevel): SourceExercise[] {
 				action: 'Reformulate',
 			},
 		],
+		C2: [
+			{ promptEnglish: 'Distinguish a concession from accepting the whole argument.', targetItalian: 'Concedo il punto, senza per questo accettarne le premesse.', phase: 'warmup', action: 'Distinguish implications' },
+			{ promptEnglish: 'Suggest that apparently opposed positions can be reconciled.', targetItalian: 'Le posizioni divergono nei mezzi, non necessariamente nel fine.', phase: 'produce', action: 'Mediate viewpoints' },
+			{ promptEnglish: 'Clarify the force of your earlier remark without sounding defensive.', targetItalian: 'Era una riserva sul metodo, non un giudizio personale.', phase: 'speak', action: 'Repair implied meaning' },
+		],
 	}
 	return fallbacks[level]
 }
@@ -247,7 +253,7 @@ async function generate(source: SourceItem, level: CefrLevel, programWeek: numbe
 							'Keep every Italian target within the word range.',
 							'Use correct accents, apostrophes, pronouns, and agreement.',
 							'Base meaning only on supplied metadata; do not invent facts or reproduce article prose.',
-							'At B2 and C1 add precision or tact, not length or obscure vocabulary.',
+							'At B2, C1 and C2 add precision or tact, not length or obscure vocabulary.',
 						],
 					}),
 				},

@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 type VocabDomain =
 	| 'food'
 	| 'family'
@@ -49,7 +49,7 @@ type GeneratedVocabulary = {
 	utilityScore: number
 }
 
-const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 const domains: VocabDomain[] = [
 	'food',
 	'family',
@@ -77,6 +77,7 @@ const levelGuidance: Record<CefrLevel, string> = {
 	B1: 'Reasons, narration, plans, practical pronoun chunks, reactions, and ordinary group conversation.',
 	B2: 'Qualification, consequence, tactful disagreement, repair, comparison, and hypothetical planning in common speech.',
 	C1: 'Precise but common stance, reformulation, tact, distinctions, and limits on a claim without academic jargon.',
+	C2: 'Idiomatic register shifts, diplomatic reframing, implicit attitudes, and precise distinctions in live interaction; avoid rare words for their own sake.',
 }
 
 const vocabularySchema = {
@@ -229,7 +230,7 @@ async function generate(
 							'Use natural modern spoken Italian with correct accents and apostrophes.',
 							'Prefer language useful around food, family, sport, cafes, travel, home, health, culture, and ordinary local news.',
 							'Keep Italian entries to seven words or fewer.',
-							'At B2 and C1 increase precision and social usefulness, not rarity or length.',
+							'At B2, C1 and C2 increase precision and social usefulness, not rarity or length.',
 							'Avoid surreal examples, rare trivia, formal jargon, near-synonym padding, and classroom-only grammar labels.',
 							'Do not repeat or closely paraphrase either avoid list.',
 						],

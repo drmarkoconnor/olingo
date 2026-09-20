@@ -6,6 +6,7 @@ import {
 	Dumbbell,
 	House,
 	Map,
+	MessagesSquare,
 	Newspaper,
 	RotateCcw,
 	Settings as SettingsIcon,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/store/useAuth'
 import Study from '@/pages/Study'
+import ConversationCourse from '@/pages/ConversationCourse'
 import Scenes from '@/pages/Scenes'
 import Mistakes from '@/pages/Mistakes'
 import Stats from '@/pages/Stats'
@@ -22,9 +24,10 @@ import Sources from '@/pages/Sources'
 import Drills from '@/pages/Drills'
 import MemoryHouse from '@/pages/MemoryHouse'
 import AuthGate from '@/ui/AuthGate'
+import { LearningHistoryProvider } from '@/components/LearningHistory'
 
 export default function App() {
-	const { authenticated, ready } = useAuth()
+	const { authenticated, ready, userId, localMode, passwordResetRequired } = useAuth()
 
 	if (!ready) {
 		return (
@@ -37,10 +40,10 @@ export default function App() {
 		)
 	}
 
-	if (!authenticated) return <AuthGate />
+	if (!authenticated || passwordResetRequired) return <AuthGate />
 
 	return (
-		<div className="app">
+		<LearningHistoryProvider key={userId} userId={userId} localMode={localMode}><div className="app">
 			<header className="topbar">
 				<div className="brand-row">
 					<div>
@@ -53,6 +56,7 @@ export default function App() {
 			<main className="content">
 				<Routes>
 					<Route path="/" element={<Study />} />
+					<Route path="/conversations" element={<ConversationCourse />} />
 					<Route path="/drills" element={<Drills />} />
 					<Route path="/memory-house" element={<MemoryHouse />} />
 					<Route path="/scenes" element={<Scenes />} />
@@ -68,6 +72,7 @@ export default function App() {
 					<BookOpen size={18} />
 					Today
 				</NavLink>
+				<NavLink to="/conversations"><MessagesSquare size={18} />Conversations</NavLink>
 				<NavLink to="/scenes">
 					<Map size={18} />
 					Scenes
@@ -97,7 +102,7 @@ export default function App() {
 					Settings
 				</NavLink>
 			</nav>
-		</div>
+		</div></LearningHistoryProvider>
 	)
 }
 

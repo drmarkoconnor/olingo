@@ -43,7 +43,7 @@ type YouTubeQuery = {
 	format: 'guided lesson' | 'subtitled conversation' | 'animated lesson' | 'culture'
 }
 
-type SourceLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type SourceLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 
 const youtubeQueries: YouTubeQuery[] = [
 	{
@@ -202,6 +202,7 @@ function availableYoutubeQueries(level: SourceLevel) {
 		B1: 'intermediate Italian B1',
 		B2: 'upper intermediate Italian B2',
 		C1: 'advanced Italian C1',
+		C2: 'Italian C2 nuanced debate interviews analysis',
 	}
 	return queries.map((query) => ({
 		...query,
@@ -530,7 +531,7 @@ export default async (req: Request) => {
 	const auth = await requireUser()
 	if (authFailed(auth)) return auth.response
 	const requestedLevel = new URL(req.url).searchParams.get('level')
-	const level = ['A1', 'A2', 'B1', 'B2', 'C1'].includes(requestedLevel ?? '')
+	const level = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(requestedLevel ?? '')
 		? (requestedLevel as SourceLevel)
 		: 'B1'
 

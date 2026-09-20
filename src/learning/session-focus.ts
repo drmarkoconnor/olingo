@@ -191,7 +191,7 @@ export const challengeModes: Array<{
 	},
 ]
 
-const cefrOrder: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const cefrOrder: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 
 function levelRank(level: CefrLevel) {
 	return cefrOrder.indexOf(level)

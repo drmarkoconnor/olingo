@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 type SentenceLength = 'short' | 'medium' | 'long'
 type CommunicativeFunction =
 	| 'request'
@@ -106,7 +106,7 @@ type GeneratedExercise = {
 	cefrLevel: CefrLevel
 }
 
-const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1']
+const levels: CefrLevel[] = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 const contentVersion = 2
 
 const actionByFunction: Record<CommunicativeFunction, string> = {
@@ -318,7 +318,7 @@ function wordCount(value: string) {
 
 function defaultMaxWordsFor(level: CefrLevel, length: SentenceLength) {
 	if (length === 'short') return 7
-	if (length === 'long' && (level === 'B1' || level === 'B2' || level === 'C1')) {
+	if (length === 'long' && (level === 'B1' || level === 'B2' || level === 'C1' || level === 'C2')) {
 		return 12
 	}
 	return 10
@@ -380,6 +380,9 @@ function levelGuidance(level: CefrLevel) {
 	}
 	if (level === 'B2') {
 		return 'B2: nuanced opinions, cause/consequence, hypothetical planning, concessions, but still natural spoken language.'
+	}
+	if (level === 'C2') {
+		return 'C2: infer unstated intent, resolve ambiguity, mediate conflicting viewpoints, adapt idiom and register precisely. Use compact turns; never equate sentence length with proficiency.'
 	}
 	if (level === 'C1') {
 		return 'C1: precise argument, subtle stance, concessive clauses, reformulation, natural adult register without literary obscurity.'

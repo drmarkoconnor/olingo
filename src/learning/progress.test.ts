@@ -14,6 +14,8 @@ import {
 	loadDailySprint,
 	quarantineExercise,
 	submitMistakeRepair,
+	submitExerciseAnswer,
+	AssessmentUnavailableError,
 	withMinimumComplexity,
 } from '@/learning/progress'
 import { db, type MistakeItem } from '@/storage/db'
@@ -27,6 +29,7 @@ beforeEach(async () => {
 
 afterEach(() => {
 	vi.unstubAllGlobals()
+	vi.restoreAllMocks()
 })
 
 describe('daily sprint composition', () => {
@@ -464,6 +467,11 @@ describe('mistake repair', () => {
 			repairStep: 0,
 		}
 		await db.mistakes.put(mistake)
+		// Supply semantic judgements explicitly; offline token overlap must not grade repairs.
+		vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+			const { answer } = JSON.parse(init.body)
+			return Response.json(assessment({ accepted: answer !== 'ciao', communicative: answer !== 'ciao' }))
+		}))
 
 		const failed = await submitMistakeRepair({
 			userId,
@@ -502,5 +510,188 @@ describe('mistake repair', () => {
 		expect(finalRepair.updated.status).toBe('repaired')
 		expect(finalRepair.updated.repairStep).toBe(3)
 		expect(finalRepair.updated.nextDueAt).toBeNull()
+	})
+})
+
+
+function assessment(overrides: Record<string, unknown> = {}) {
+	return {
+		provider: 'openai', status: 'assessed', exerciseValid: true, invalidReason: '',
+		accepted: true, communicative: true, correctedItalian: 'Mi passi il pane, per favore?',
+		meaning: 'Please pass me the bread.', errorTags: [], shortFeedback: 'A natural alternative.',
+		repairPrompts: [], confidence: 0.95, ...overrides,
+	}
+}
+
+describe('semantic assessment failure isolation', () => {
+	async function submission() {
+		const [item] = await loadDailySprint(userId, 8, { generateFresh: false })
+		return { userId, item, answer: 'Mi passi il pane, per favore?', hintsUsed: 0, msUsed: 4000, spoken: true }
+	}
+
+	it.each([
+		['service outage', () => new Response('', { status: 503 })],
+		['missing fields', () => Response.json({ accepted: true })],
+		['wrong field types', () => Response.json(assessment({ accepted: 'yes' }))],
+		['old deterministic fallback', () => Response.json(assessment({ provider: 'deterministic' }))],
+		['invalid JSON', () => new Response('{')],
+	])('does not mutate any learner evidence after %s', async (_label, response) => {
+		const args = await submission()
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => response()))
+		await expect(submitExerciseAnswer(args)).rejects.toBeInstanceOf(AssessmentUnavailableError)
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.mistakes, db.misspellings]) {
+			expect(await table.count()).toBe(0)
+		}
+	})
+
+	it('rolls back local progress if a later evidence write fails, so a retry cannot double-score', async () => {
+		const args = await submission()
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		vi.spyOn(db.skillAttempts, 'add').mockRejectedValueOnce(new Error('Storage unavailable'))
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('Storage unavailable')
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.mistakes]) expect(await table.count()).toBe(0)
+	})
+
+	it('reuses an assessed recording after reload without another API call or progress increment', async () => {
+		const args = { ...await submission(), attemptId: 'retained-recording' }
+		const fetch = vi.fn(async () => Response.json(assessment()))
+		vi.stubGlobal('fetch', fetch)
+		const first = await submitExerciseAnswer(args)
+		const states = await db.exerciseStates.toArray()
+		const skills = await db.skillStates.toArray()
+		const second = await submitExerciseAnswer(args)
+		expect(second).toEqual(first)
+		expect(fetch).toHaveBeenCalledTimes(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(await db.skillAttempts.count()).toBe(1)
+		expect(await db.exerciseStates.toArray()).toEqual(states)
+		expect(await db.skillStates.toArray()).toEqual(skills)
+	})
+
+	it('serialises duplicate recording submissions from two tabs into one evidence write', async () => {
+		const args = { ...await submission(), attemptId: 'concurrent-recording' }
+		let calls = 0
+		let release!: () => void
+		const bothRequested = new Promise<void>((resolve) => { release = resolve })
+		vi.stubGlobal('fetch', vi.fn(async () => {
+			calls += 1
+			if (calls === 2) release()
+			await bothRequested
+			return Response.json(assessment())
+		}))
+		const [first, second] = await Promise.all([submitExerciseAnswer(args), submitExerciseAnswer(args)])
+		expect(second).toEqual(first)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(await db.skillAttempts.count()).toBe(1)
+		const [skill] = await db.skillStates.toArray()
+		expect(skill.attempts).toBe(1)
+	})
+
+	it('commits canonical course evidence atomically and keeps it unchanged on retry', async () => {
+		const args = { ...await submission(), attemptId: 'course-attempt', hintsUsed: 1,
+			speechEvidence: { rawTranscript: 'Mi passi pane per favore', confirmedTranscript: 'Mi passi il pane, per favore?', recordingDurationMs: 6400, speechOnsetMs: 900, utteranceDurationMs: 4300, timingBasis: 'recording-start' as const },
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'hesitant' as const },
+		}
+		const fetch = vi.fn(async () => Response.json(assessment()))
+		vi.stubGlobal('fetch', fetch)
+		await submitExerciseAnswer(args)
+		const original = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(original).toMatchObject({ userId, answer: args.answer, hintsUsed: 1, spoken: true, runId: 'run-one', atISO: log.ts })
+		expect(original?.assessment).toEqual(log.assessment)
+		expect(original?.speechEvidence).toEqual(args.speechEvidence)
+		expect(original?.speechEvidence).toEqual(log.speechEvidence)
+		await submitExerciseAnswer({ ...args, answer: 'A changed answer must not replace assessed speech.', spoken: false, hintsUsed: 0 })
+		expect(await db.courseAttempts.get(args.attemptId)).toEqual(original)
+		expect(await db.courseAttempts.count()).toBe(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+		expect(fetch).toHaveBeenCalledTimes(1)
+	})
+
+	it('dates spoken retrieval from the recording, not a later assessment of its saved draft', async () => {
+		const yesterday = new Date(Date.now() - 86_400_000).toISOString()
+		const args = { ...await submission(), attemptId: 'restored-course-recording',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'fluent' as const, practicedAt: yesterday },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		await submitExerciseAnswer(args)
+		const saved = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(saved?.atISO).toBe(yesterday)
+		expect(Date.parse(log.ts)).toBeGreaterThan(Date.parse(yesterday) + 86_000_000)
+		expect(saved).not.toHaveProperty('practicedAt')
+	})
+
+	it.each([
+		['invalid date', true, 'not-a-date'],
+		['future date', true, '2099-01-01T00:00:00Z'],
+		['typed answer', false, '2020-01-01T00:00:00Z'],
+	])('does not use %s as delayed spoken practice evidence', async (_label, spoken, practicedAt) => {
+		const args = { ...await submission(), attemptId: 'invalid-practice-time', spoken,
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const, practicedAt },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		await submitExerciseAnswer(args)
+		const saved = await db.courseAttempts.get(args.attemptId)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(saved?.atISO).toBe(log.ts)
+	})
+
+	it('rolls back general learning evidence when the course record cannot be saved', async () => {
+		const args = { ...await submission(), attemptId: 'course-write-failure',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const },
+		}
+		const statesBefore = await db.exerciseStates.toArray()
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		vi.spyOn(db.courseAttempts, 'add').mockRejectedValueOnce(new Error('Course storage unavailable'))
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('Course storage unavailable')
+		expect(await db.exerciseStates.toArray()).toEqual(statesBefore)
+		for (const table of [db.exerciseLogs, db.skillStates, db.skillAttempts, db.courseAttempts, db.mistakes]) expect(await table.count()).toBe(0)
+		await submitExerciseAnswer(args)
+		expect(await db.courseAttempts.count()).toBe(1)
+		expect(await db.exerciseLogs.count()).toBe(1)
+	})
+
+	it('does not write course evidence for an invalid prompt', async () => {
+		const args = { ...await submission(), attemptId: 'invalid-course-prompt',
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'fluent' as const },
+		}
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment({ exerciseValid: false, invalidReason: 'The cue contradicts its goal.', accepted: false, communicative: false }))))
+		const { result } = await submitExerciseAnswer(args)
+		expect(result.exerciseValid).toBe(false)
+		for (const table of [db.courseAttempts, db.exerciseLogs, db.skillAttempts]) expect(await table.count()).toBe(0)
+	})
+
+	it('requires a stable attempt identifier before evaluating a course answer', async () => {
+		const args = { ...await submission(),
+			courseEvidence: { runId: 'run-one', lessonId: 'conversation-a1-social', turnId: 'conversation-a1-social-1', variant: 'base' as const, flow: 'unreported' as const },
+		}
+		const fetch = vi.fn()
+		vi.stubGlobal('fetch', fetch)
+		await expect(submitExerciseAnswer(args)).rejects.toThrow('attempt identifier')
+		expect(fetch).not.toHaveBeenCalled()
+		expect(await db.courseAttempts.count()).toBe(0)
+	})
+
+	it('honours a valid alternative without inheriting model-answer spelling errors or invented latency', async () => {
+		const args = await submission()
+		args.item.exercise = { ...args.item.exercise, promptEnglish: 'Please pass me the bread.', targetItalian: 'Passami il pane, per favore.', acceptedItalian: [], action: 'Build', communicativeFunction: 'request' }
+		vi.stubGlobal('fetch', vi.fn(async () => Response.json(assessment())))
+		const { result } = await submitExerciseAnswer(args)
+		expect(result.accepted).toBe(true)
+		expect(result.correctedItalian).toBe(args.answer)
+		expect(result.spellingIssues).toEqual([])
+		expect(result.errorTags).toEqual([])
+		expect(await db.mistakes.count()).toBe(0)
+		expect(await db.misspellings.count()).toBe(0)
+		const [log] = await db.exerciseLogs.toArray()
+		expect(log.answer).toBe(args.answer)
+		expect(log.responseLatencyMs).toBeUndefined()
+		const [state] = await db.skillStates.toArray()
+		expect(state.fastSpokenSuccesses).toBe(0)
 	})
 })

@@ -16,9 +16,8 @@ import {
 	Target,
 	X,
 } from 'lucide-react'
-import SentenceVoiceRecorder, {
-	type VoiceRecording,
-} from '@/components/SentenceVoiceRecorder'
+import SentenceVoiceRecorder from '@/components/SentenceVoiceRecorder'
+import { useSentenceSpeech } from '@/hooks/useSentenceSpeech'
 import { cefrLevels, type CefrLevel } from '@/learning/content'
 import {
 	drillFamilies,
@@ -41,10 +40,10 @@ import {
 	type GeneratedDrillPayload,
 } from '@/learning/verb-drills'
 import type { EvaluationResult } from '@/learning/evaluator'
-import { submitExerciseAnswer, type SprintItem } from '@/learning/progress'
+import { AssessmentUnavailableError, submitExerciseAnswer, type SprintItem } from '@/learning/progress'
 import { createExerciseState } from '@/learning/scheduler'
 import type { SessionFocus } from '@/learning/session-focus'
-import { apiFetch, friendlyApiError } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import { speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
@@ -127,8 +126,9 @@ export default function Drills() {
 		(saved?.run.prompts[saved.index]?.stage ?? '') === 'meet'
 	)
 	const [checking, setChecking] = useState(false)
-	const [speechLoading, setSpeechLoading] = useState(false)
-	const [speechError, setSpeechError] = useState<string | null>(null)
+	const [recordingActive, setRecordingActive] = useState(false)
+	const checkingRef = useRef(false)
+	const playbackRef = useRef<HTMLAudioElement | null>(null)
 	const [prefetchedRun, setPrefetchedRun] = useState<DrillRun | null>(null)
 	const [prefetching, setPrefetching] = useState(false)
 	const promptStartedAtRef = useRef(Date.now())
@@ -137,6 +137,18 @@ export default function Drills() {
 	const family = getDrillFamily(familyId)
 	const current = run?.prompts[index] ?? null
 	const complete = Boolean(run && index >= run.prompts.length)
+	const speech = useSentenceSpeech({
+		userId,
+		exerciseId: current?.exercise.id ?? '',
+		resetKey: `${run?.id ?? 'setup'}:${current?.id ?? 'complete'}`,
+		onTranscript: setAnswer,
+		hintsUsed: hintsRevealed,
+		wordBankUsed: false,
+	})
+	const answerLocked = recordingActive || speech.loading || checking
+	useEffect(() => {
+		if (recordingActive) playbackRef.current?.pause()
+	}, [recordingActive])
 	const availableFocuses = drillFocuses.filter((item) =>
 		drillFocusAvailable(family, item.id, targetLevel)
 	)
@@ -166,7 +178,7 @@ export default function Drills() {
 		setAnswer('')
 		setFeedback(null)
 		setHintsRevealed(0)
-		setSpeechError(null)
+		speech.setError(null)
 		setModelVisible(prompt?.stage === 'meet')
 		promptStartedAtRef.current = Date.now()
 	}
@@ -261,13 +273,12 @@ export default function Drills() {
 		if (!drillFocusAvailable(family, focus, level)) setFocus('guided')
 	}
 
-	async function submitCandidate(
-		candidate: string,
-		voice?: { responseLatencyMs: number; utteranceDurationMs: number }
-	) {
-		if (!current || !candidate.trim() || checking || feedback) return
+	async function submitCandidate(candidate: string) {
+		if (!current || !candidate.trim() || checkingRef.current || answerLocked || feedback || !speech.ready) return
+		checkingRef.current = true
 		setChecking(true)
-		setSpeechError(null)
+		speech.setError(null)
+		const draft = speech.draft
 		const msUsed = Math.max(500, Date.now() - promptStartedAtRef.current)
 		try {
 			const state =
@@ -289,12 +300,20 @@ export default function Drills() {
 				targetLevel: run?.level ?? targetLevel,
 				sessionFocus: focusForDrill(current.focus),
 				sessionDomain: current.exercise.vocabDomain ?? 'mixed',
-				hintsUsed: hintsRevealed,
-				conceptHintsUsed: hintsRevealed,
-				spokenFirst: Boolean(voice),
-				spoken: Boolean(voice),
-				responseLatencyMs: voice?.responseLatencyMs ?? msUsed,
-				utteranceDurationMs: voice?.utteranceDurationMs,
+				hintsUsed: Math.max(hintsRevealed, draft?.hintsUsed ?? 0),
+				conceptHintsUsed: Math.max(hintsRevealed, draft?.hintsUsed ?? 0),
+				spokenFirst: Boolean(draft),
+				spoken: Boolean(draft),
+				attemptId: draft?.attemptId,
+				speechEvidence: draft ? {
+					rawTranscript: draft.rawTranscript,
+					confirmedTranscript: candidate.trim(),
+					recordingDurationMs: draft.recordingDurationMs,
+					speechOnsetMs: draft.responseLatencyMs,
+					utteranceDurationMs: draft.utteranceDurationMs,
+					timingBasis: draft.timingBasis,
+				} : undefined,
+				utteranceDurationMs: draft?.utteranceDurationMs ?? undefined,
 				mode: 'verb-drill',
 				msUsed,
 			})
@@ -304,7 +323,7 @@ export default function Drills() {
 				model: current.exercise.targetItalian,
 				meaning: current.exercise.promptEnglish,
 			})
-			setResults((items) => [
+			if (submission.result.exerciseValid) setResults((items) => [
 				...items,
 				{
 					promptId: current.id,
@@ -312,74 +331,31 @@ export default function Drills() {
 					communicative: submission.result.communicative,
 					msUsed,
 					hintsUsed: hintsRevealed,
-					spoken: Boolean(voice),
+					spoken: Boolean(draft),
 				},
 			])
+			await speech.clearAfterAssessment().catch(() => {
+				speech.setError('Your assessment was saved, but the recording draft could not be cleared on this device.')
+			})
+		} catch (error) {
+			speech.setError(error instanceof AssessmentUnavailableError
+				? error.message
+				: 'Your answer could not be saved. Keep it here and try again.')
 		} finally {
+			checkingRef.current = false
 			setChecking(false)
 		}
 	}
 
-	async function handleRecording(recording: VoiceRecording) {
-		if (!current || feedback || speechLoading) return
-		setSpeechLoading(true)
-		setSpeechError(null)
-		try {
-			const form = new FormData()
-			form.append('audio', recording.audio, 'olingo-drill.webm')
-			form.append(
-				'context',
-				[
-					current.exercise.vocabDomain,
-					current.exercise.communicativeFunction,
-					current.exercise.phraseFamily,
-				]
-					.filter(Boolean)
-					.join(', ')
-			)
-			form.append('skillId', `drill:${current.familyId}:${current.focus}`)
-			form.append('responseLatencyMs', String(recording.responseLatencyMs))
-			form.append('utteranceDurationMs', String(recording.utteranceDurationMs))
-			const response = await apiFetch('/api/transcribe-speech', {
-				method: 'POST',
-				body: form,
-			})
-			const data = (await response.json().catch(() => null)) as {
-				transcript?: string
-				error?: string
-			} | null
-			if (!response.ok || !data?.transcript) {
-				throw new Error(
-					friendlyApiError(
-						response.status,
-						data?.error,
-						'Speech could not be checked. Type the sentence instead.'
-					)
-				)
-			}
-			await submitCandidate(data.transcript, {
-				responseLatencyMs: recording.responseLatencyMs,
-				utteranceDurationMs: recording.utteranceDurationMs,
-			})
-		} catch (error) {
-			setSpeechError(
-				error instanceof Error
-					? error.message
-					: 'Speech could not be checked. Type the sentence instead.'
-			)
-		} finally {
-			setSpeechLoading(false)
-		}
-	}
-
 	function nextPrompt() {
-		if (!run) return
+		if (!run || answerLocked) return
 		const nextIndex = index + 1
 		setIndex(nextIndex)
 		resetPrompt(run.prompts[nextIndex] ?? null)
 	}
 
 	function leaveRun() {
+		if (answerLocked) return
 		setRun(null)
 		setIndex(0)
 		setResults([])
@@ -573,7 +549,7 @@ export default function Drills() {
 	return (
 		<div className="drills-workspace">
 			<aside className="drill-rail">
-				<button className="drill-back" type="button" onClick={leaveRun}>
+				<button className="drill-back" type="button" disabled={answerLocked} onClick={leaveRun}>
 					<ArrowLeft size={17} /> Change drill
 				</button>
 				<div className="drill-rail-heading">
@@ -614,7 +590,7 @@ export default function Drills() {
 					<div className="drill-speaker-line">
 						<span>Italian speaker</span>
 						<strong>{current.exercise.npcLine}</strong>
-						<button type="button" title="Hear the Italian speaker" onClick={() => void speak(current.exercise.npcLine ?? '')}>
+						<button type="button" title="Hear the Italian speaker" disabled={answerLocked} onClick={() => void speak(current.exercise.npcLine ?? '')}>
 							<Ear size={18} />
 						</button>
 					</div>
@@ -651,20 +627,35 @@ export default function Drills() {
 							<div className="drill-speaking-row">
 								<div><Mic2 size={18} /><span>Answer aloud first</span></div>
 								<SentenceVoiceRecorder
-									busy={speechLoading}
-									disabled={checking || Boolean(feedback)}
-									promptStartedAt={promptStartedAtRef.current}
-									onRecording={handleRecording}
+									busy={speech.loading}
+									disabled={checking || Boolean(feedback) || !speech.ready}
+									onActiveChange={setRecordingActive}
+									onRecording={speech.recording}
 								/>
 							</div>
-							{speechError && <p className="field-error">{speechError}</p>}
+							{speech.error && <p className="field-error" role="alert">{speech.error}</p>}
+							{speech.draft && (
+								<section className="speech-review" aria-label="Review your spoken answer">
+									<strong>{feedback ? 'Your recording' : 'Check what was heard'}</strong>
+									{!feedback && <p>Replay your recording and correct any transcription mistakes. Confirm below when it matches what you said.</p>}
+									{speech.audioUrl && <audio ref={playbackRef} controls={!answerLocked} src={speech.audioUrl} aria-label="Your recorded answer" />}
+									<p className="speech-timing">
+										Recording: {(speech.draft.recordingDurationMs / 1000).toFixed(1)} s
+										{speech.draft.responseLatencyMs !== null ? ` · Speech began ${(speech.draft.responseLatencyMs / 1000).toFixed(1)} s after recording started` : ' · Speech onset unavailable'}
+									</p>
+									<div className="drill-task-actions">
+										<button className="btn btn-secondary" type="button" disabled={answerLocked || Boolean(feedback)} onClick={() => void speech.transcribe()}>Retry transcription</button>
+										<button className="btn btn-secondary" type="button" disabled={answerLocked || Boolean(feedback)} onClick={() => void speech.discard()}>Discard recording</button>
+									</div>
+								</section>
+							)}
 							<textarea
-								aria-label="Italian answer"
-								disabled={Boolean(feedback)}
-								placeholder="Type the Italian you meant..."
+								aria-label={speech.draft ? "Confirm your Italian transcript" : "Italian answer"}
+								disabled={Boolean(feedback) || answerLocked || !speech.ready}
+								placeholder={speech.draft ? "Check or type what you said..." : "Or type your Italian answer..."}
 								rows={4}
 								value={answer}
-								onChange={(event) => setAnswer(event.target.value)}
+								onChange={(event) => { setAnswer(event.target.value); if (speech.draft) speech.editTranscript(event.target.value) }}
 							/>
 							{visibleHints.length > 0 && (
 								<div className="drill-hints">
@@ -678,9 +669,12 @@ export default function Drills() {
 									<section>
 										<strong>{feedback.result.message}</strong>
 										<p>{feedback.result.shortFeedback}</p>
-										<b>{feedback.model}</b>
+										{!feedback.result.exerciseValid && <p>This prompt has not counted towards your results.</p>}
+										<p>{!feedback.result.exerciseValid ? 'Your answer:' : feedback.result.accepted ? 'Your answer works:' : 'Suggested correction:'}</p>
+										<b>{(feedback.result.accepted || !feedback.result.exerciseValid) ? answer : feedback.result.correctedItalian || feedback.model}</b>
+										{feedback.result.exerciseValid && <details><summary>Another model example</summary><p>{feedback.model}</p></details>}
 										<span>Meaning: {feedback.meaning}</span>
-										<button className="btn btn-secondary" type="button" onClick={() => void speak(feedback.model)}>
+										<button className="btn btn-secondary" type="button" onClick={() => void speak((feedback.result.accepted || !feedback.result.exerciseValid) ? answer : feedback.result.correctedItalian || feedback.model)}>
 											<Ear size={17} /> Hear Italian
 										</button>
 									</section>
@@ -691,7 +685,7 @@ export default function Drills() {
 								<button
 									className="btn btn-secondary"
 									type="button"
-									disabled={Boolean(feedback) || hintsRevealed >= current.exercise.hints.length}
+									disabled={Boolean(feedback) || answerLocked || Boolean(speech.draft) || hintsRevealed >= current.exercise.hints.length}
 									onClick={() => setHintsRevealed((value) => value + 1)}>
 									<Lightbulb size={18} /> Hint
 								</button>
@@ -703,10 +697,10 @@ export default function Drills() {
 									<button
 										className="btn btn-primary"
 										type="button"
-										disabled={!answer.trim() || checking || speechLoading}
+										disabled={!answer.trim() || answerLocked || !speech.ready}
 										onClick={() => void submitCandidate(answer)}>
 										{checking ? <Loader2 className="spin" size={18} /> : <Target size={18} />}
-										Check
+										{speech.draft ? "Confirm transcript and assess" : "Assess answer"}
 									</button>
 								)}
 							</div>

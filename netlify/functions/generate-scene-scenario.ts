@@ -3,7 +3,7 @@ import { authFailed, requireUser } from './_shared/auth'
 import { getEnv } from './_shared/env'
 import { json, methodNotAllowed, readJson } from './_shared/http'
 
-type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+type CefrLevel = 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 
 type Body = {
 	baseScene?: {
@@ -151,6 +151,7 @@ async function generateWithOpenAI(body: Body) {
 							'Keep the same broad context, e.g. cafe remains cafe and station remains station.',
 							'Make the scenario usable for spoken sentence production, not reading comprehension.',
 							'Use four short action labels that can drive drill selection.',
+							'At C2 require inference of implicit attitudes, register adjustment, diplomatic repair or mediation of viewpoints; do not equate difficulty with length or rare vocabulary.',
 							'Do not include markdown.',
 						],
 					}),
@@ -187,6 +188,7 @@ export default async (req: Request) => {
 		return json({ error: 'Missing base scene' }, { status: 400 })
 	}
 
+	body.targetLevel = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].includes(body.targetLevel ?? '') ? body.targetLevel : 'B1'
 	const fallback = fallbackScenario(body)
 	const generated = await generateWithOpenAI(body)
 	const scenario = sanitizeScenario(generated ?? fallback, fallback)

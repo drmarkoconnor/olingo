@@ -18,6 +18,13 @@ function failureMessage(status: number) {
 	return `OpenAI transcription is temporarily unavailable (${status}).`
 }
 
+/** Missing or unmeasured timing is unknown, never a manufactured zero. */
+function optionalTiming(value: FormDataEntryValue | null) {
+	if (typeof value !== 'string' || !value.trim()) return null
+	const number = Number(value)
+	return Number.isFinite(number) && number >= 0 ? Math.round(number) : null
+}
+
 export default async (req: Request) => {
 	try {
 		if (req.method !== 'POST') return methodNotAllowed()
@@ -29,7 +36,10 @@ export default async (req: Request) => {
 		if (!(audio instanceof File)) {
 			return json({ error: 'Missing audio recording' }, { status: 400 })
 		}
-		if (audio.size > 10 * 1024 * 1024) {
+		if (audio.size === 0 || form.get('speechDetected') === 'false') {
+			return json({ error: 'No speech was detected. Please record your answer again.' }, { status: 422 })
+		}
+		if (audio.size > 4 * 1024 * 1024) {
 			return json({ error: 'Audio recording is too large' }, { status: 413 })
 		}
 
@@ -41,14 +51,8 @@ export default async (req: Request) => {
 
 		const context = String(form.get('context') || '').slice(0, 300)
 		const skillId = String(form.get('skillId') || 'speech').slice(0, 120)
-		const responseLatencyMs = Math.max(
-			0,
-			Math.round(Number(form.get('responseLatencyMs')) || 0)
-		)
-		const utteranceDurationMs = Math.max(
-			0,
-			Math.round(Number(form.get('utteranceDurationMs')) || 0)
-		)
+		const responseLatencyMs = optionalTiming(form.get('responseLatencyMs'))
+		const utteranceDurationMs = optionalTiming(form.get('utteranceDurationMs'))
 		const transcriptionForm = new FormData()
 		transcriptionForm.append('file', audio)
 		transcriptionForm.append(
@@ -63,6 +67,7 @@ export default async (req: Request) => {
 		)
 
 		const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+			signal: AbortSignal.timeout(25_000),
 			method: 'POST',
 			headers: { Authorization: `Bearer ${apiKey}` },
 			body: transcriptionForm,
@@ -71,7 +76,7 @@ export default async (req: Request) => {
 			return json({ error: failureMessage(response.status) }, { status: 502 })
 		}
 		const data = (await response.json()) as { text?: string }
-		const transcript = data.text?.trim() ?? ''
+		const transcript = typeof data.text === 'string' ? data.text.trim() : ''
 		if (!transcript) {
 			return json(
 				{ error: 'I could not hear a clear Italian response. Please try once more.' },
@@ -87,11 +92,14 @@ export default async (req: Request) => {
 				userId: auth.user.id,
 				skillId,
 				transcript,
+				status: 'unconfirmed',
 				responseLatencyMs,
 				utteranceDurationMs,
 				createdAt,
 			}
-		)
+		).catch(() => {
+			console.warn('Transcript returned without a remote provisional speech log.')
+		})
 
 		return json({
 			transcript,
@@ -101,8 +109,8 @@ export default async (req: Request) => {
 		})
 	} catch (error) {
 		return json(
-			{ error: error instanceof Error ? error.message : String(error) },
-			{ status: 500 }
+			{ error: 'Transcription is unavailable. Your recording has not been assessed. Please try again.' },
+			{ status: 503 }
 		)
 	}
 }

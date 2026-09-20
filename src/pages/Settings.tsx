@@ -1,6 +1,8 @@
+import { useState } from 'react'
+import { saveLearnerTargetLevel } from '@/learning/learner-profile'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import { cefrLevels } from '@/learning/content'
+import { cefrLevels, type CefrLevel } from '@/learning/content'
 import { getCurriculumStage } from '@/learning/curriculum'
 
 export default function Settings() {
@@ -18,8 +20,23 @@ export default function Settings() {
 		setSentenceLength,
 		setProgramWeek,
 	} = useSettings()
-	const { userId, email, localMode, name, signOut } = useAuth()
+	const { userId, email, localMode, name, signOut, identitySettings, settingsError, loadIdentitySettings } = useAuth()
 	const stage = getCurriculumStage(programWeek)
+	const [savingLevel, setSavingLevel] = useState(false)
+	const [levelError, setLevelError] = useState('')
+	async function chooseLevel(level: CefrLevel) {
+		setSavingLevel(true)
+		setLevelError('')
+		const isCurrentUser = () => useAuth.getState().userId === userId && useAuth.getState().authenticated
+		try {
+			const profile = await saveLearnerTargetLevel(userId, level, isCurrentUser)
+			if (profile && isCurrentUser()) setTargetLevel(level)
+		} catch {
+			if (isCurrentUser()) setLevelError('Your level could not be saved. Please try again.')
+		} finally {
+			if (isCurrentUser()) setSavingLevel(false)
+		}
+	}
 	return (
 		<div>
 			<h2>Settings</h2>
@@ -51,6 +68,16 @@ export default function Settings() {
 				</div>
 			</div>
 
+			{!localMode && <div className="tile">
+				<div style={{ fontWeight: 600 }}>Account access</div>
+				{identitySettings ? <>
+					<p>{identitySettings.disableSignup ? 'Registration is invitation only.' : 'Registration is open in the site configuration.'}</p>
+					<p>{identitySettings.providers.google ? 'Google sign-in is enabled.' : 'Google sign-in is not enabled. Email and password sign-in is available.'}</p>
+					<p className="settings-note">Each family member needs their own account. The site owner manages invitations and sign-in providers in Netlify. No account is created by selecting a learner name.</p>
+				</> : <p>{settingsError ?? 'Checking the site’s account settings…'}</p>}
+				<button className="btn btn-muted" type="button" onClick={loadIdentitySettings}>Refresh access settings</button>
+			</div>}
+
 			<div className="tile">
 				<label>Daily goal (minutes)</label>
 				<input
@@ -74,13 +101,15 @@ export default function Settings() {
 			</div>
 			<div className="tile">
 				<label>Level</label>
+				{levelError && <p role="alert">{levelError}</p>}
 				<div className="segmented">
 					{cefrLevels.map((level) => (
 						<button
 							type="button"
 							key={level}
 							className={targetLevel === level ? 'active' : ''}
-							onClick={() => setTargetLevel(level)}>
+							disabled={savingLevel}
+							onClick={() => void chooseLevel(level)}>
 							{level}
 						</button>
 					))}

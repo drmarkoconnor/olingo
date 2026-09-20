@@ -16,7 +16,7 @@ type SourceItem = {
 
 type Body = {
 	sourceItem?: SourceItem
-	level?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
+	level?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2'
 }
 
 type ReaderParagraph = {
@@ -46,6 +46,7 @@ const levelGuidance: Record<NonNullable<Body['level']>, string> = {
 	B1: 'Use clear connected prose with common reasons, events, and opinions in sentences of roughly 8-14 words.',
 	B2: 'Use natural qualification and consequences while keeping sentences easy to say aloud.',
 	C1: 'Use precise, idiomatic adult language without academic jargon or unnecessarily long sentences.',
+	C2: 'Preserve implicit stance and rhetorical ambiguity; distinguish evidence from interpretation and support nuanced synthesis across viewpoints.',
 }
 
 const readerSchema = {
@@ -243,6 +244,7 @@ function fallbackReader(sourceItem: SourceItem, level: string) {
 		B1: 'Secondo me, questa notizia è importante perché...',
 		B2: 'Il punto principale mi sembra valido, anche se...',
 		C1: 'A mio avviso, la questione è più sfumata perché...',
+		C2: 'Le due posizioni sembrano inconciliabili; il punto di contatto è...',
 	}
 	return {
 		paragraphs: [
@@ -304,7 +306,7 @@ async function generateReader(sourceItem: SourceItem, level: string, articleText
 							'Do not invent a detail that is absent from the source material.',
 							'Use original learner prose, never copied article sentences.',
 							'Keep vocabulary, grammar, and sentence shape suitable for the requested level.',
-							'At B2 and C1 increase precision, not obscurity or sentence length.',
+							'At B2, C1 and C2 increase precision, not obscurity or sentence length.',
 							'Include 4-6 useful glossary items.',
 							'End with one simple Italian discussion prompt.',
 						],
@@ -345,7 +347,7 @@ export default async (req: Request) => {
 		return json({ error: 'Missing source item' }, { status: 400 })
 	}
 
-	const level = body.level ?? 'B1'
+	const level = body.level && Object.prototype.hasOwnProperty.call(levelGuidance, body.level) ? body.level : 'B1'
 	const store = getStore({ name: 'content-cache', consistency: 'strong' })
 	const key = cacheKey(body.sourceItem, level)
 	const cached = (await store.get(key, { type: 'json' })) as ReaderPayload | null

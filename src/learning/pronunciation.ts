@@ -280,6 +280,12 @@ export const pronunciationPassages: PronunciationPassage[] = [
 		focus: ['per quanto ne so', 'decisione', 'definitiva'],
 		prepCue: 'Keep the opening light and place the emphasis on definitiva.',
 	},
+	{
+		id: 'c2-diplomatic-clarification', title: 'Clarifying an implication', level: 'C2', weeks: [1, 24],
+		text: 'Non metto in dubbio le intenzioni; mi chiedo, semmai, se il risultato non rischi di essere diverso da quello sperato.',
+		focus: ['semmai', 'non metto in dubbio', 'diverso'],
+		prepCue: 'Make the concession sincere, then emphasise the distinction without sounding accusatory.',
+	},
 ]
 
 function stableHash(value: string) {

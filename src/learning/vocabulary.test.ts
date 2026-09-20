@@ -110,6 +110,13 @@ describe('thematic vocabulary review', () => {
 		expect(saved[0].source).toBe('ai')
 	})
 
+	it('has authored C2 resources before an AI refill arrives', async () => {
+		const queue = await loadVocabularyReviewQueue(userId, 'milan-cafe', {
+			programWeek: 1, targetLevel: 'C2', limit: 8, dateKey: '2026-07-17',
+		})
+		expect(queue.filter((card) => card.level === 'C2').length).toBeGreaterThanOrEqual(6)
+	})
+
 	it('has useful exact-level cards before an AI refill arrives', async () => {
 		const queue = await loadVocabularyReviewQueue(userId, 'milan-cafe', {
 			programWeek: 1,

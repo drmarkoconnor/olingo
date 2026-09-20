@@ -23,9 +23,11 @@ import {
 	Volume2,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import SessionRecap from '@/components/SessionRecap'
 import SentenceVoiceRecorder, {
 	type VoiceRecording,
 } from '@/components/SentenceVoiceRecorder'
+import { useSentenceSpeech } from '@/hooks/useSentenceSpeech'
 import {
 	getExerciseAction,
 	getExercisePhase,
@@ -96,7 +98,7 @@ import { apiFetch, friendlyApiError } from '@/lib/api'
 import { canTTS, speak } from '@/lib/tts'
 import { useAuth } from '@/store/useAuth'
 import { useSettings } from '@/store/useSettings'
-import type { DailySession, DailySessionItem, MistakeItem } from '@/storage/db'
+import type { DailySession, DailySessionItem, MistakeItem, SpeakingDraft } from '@/storage/db'
 
 type FeedbackState = {
 	result: EvaluationResult
@@ -216,8 +218,13 @@ export default function Study() {
 	const [modelIntroduced, setModelIntroduced] = useState(false)
 	const [sentenceRepairAttempt, setSentenceRepairAttempt] = useState(false)
 	const [sentenceRepairCarryMs, setSentenceRepairCarryMs] = useState(0)
-	const [speechLoading, setSpeechLoading] = useState(false)
-	const [speechError, setSpeechError] = useState<string | null>(null)
+	const [assessmentLoading, setAssessmentLoading] = useState(false)
+	const [assessmentError, setAssessmentError] = useState<string | null>(null)
+	const [recorderActive, setRecorderActive] = useState(false)
+	const assessmentLock = useRef(false)
+	const [repairError, setRepairError] = useState<string | null>(null)
+	const [repairLoading, setRepairLoading] = useState(false)
+	const repairLock = useRef(false)
 	const [feedback, setFeedback] = useState<FeedbackState | null>(null)
 	const [repairFeedback, setRepairFeedback] = useState<FeedbackState | null>(null)
 	const [pronunciationFeedback, setPronunciationFeedback] =
@@ -355,7 +362,6 @@ export default function Study() {
 			setModelIntroduced(false)
 			setSentenceRepairAttempt(false)
 			setSentenceRepairCarryMs(0)
-			setSpeechLoading(false)
 			setSpeechError(null)
 			setSourceReflection('')
 			setTransferFeedback(null)
@@ -421,6 +427,19 @@ export default function Study() {
 			? withMinimumComplexity(current, 2)
 			: current
 		: undefined
+	const speech = useSentenceSpeech({
+		userId,
+		exerciseId: practiceCurrent?.exercise.id,
+		resetKey: `${sentenceRepairAttempt}:${modelIntroduced}`,
+		onTranscript: setAnswer,
+		hintsUsed: hintsRevealed,
+		wordBankUsed,
+	})
+	const speechLoading = speech.loading || assessmentLoading
+	const speechError = assessmentError || speech.error
+	const setSpeechError = setAssessmentError
+	const currentExerciseRef = useRef(practiceCurrent?.exercise.id)
+	currentExerciseRef.current = practiceCurrent?.exercise.id
 	const currentMistake = repairMistakes[
 		Math.min(repairActivity?.completedCount ?? 0, Math.max(0, repairMistakes.length - 1))
 	]
@@ -619,6 +638,7 @@ export default function Study() {
 	useEffect(() => {
 		setRepairAnswer('')
 		setRepairFeedback(null)
+		setRepairError(null)
 		setUnitStartedAt(Date.now())
 	}, [currentMistake?.id])
 
@@ -684,98 +704,56 @@ export default function Study() {
 
 	async function handleSentenceSubmit(event: FormEvent) {
 		event.preventDefault()
-		await submitSentenceCandidate(answer)
+		if (recorderActive || speech.loading || !speech.ready) return
+		await submitSentenceCandidate(answer, speech.draft ?? undefined)
 	}
 
-	async function submitSentenceCandidate(
-		candidate: string,
-		voice?: Omit<VoiceRecording, 'audio'>
-	) {
-		if (!practiceCurrent || feedback || !candidate.trim()) return
-		const msUsed = voice
-			? voice.responseLatencyMs + voice.utteranceDurationMs
-			: Date.now() - unitStartedAt
-		const result = await submitExerciseAnswer({
-			userId,
-			item: practiceCurrent,
-			answer: candidate.trim(),
-			targetLevel,
-			sessionFocus,
-			sessionDomain,
-			hintsUsed: hintsRevealed + (wordBankUsed ? 1 : 0),
-			conceptHintsUsed: hintsRevealed,
-			wordBankUsed,
-			spokenFirst: Boolean(voice) || spokenFirst,
-			spoken: Boolean(voice),
-			responseLatencyMs: voice?.responseLatencyMs,
-			utteranceDurationMs: voice?.utteranceDurationMs,
-			mode: 'sentence',
-			msUsed,
-		})
-		setAnswer(candidate.trim())
-		setSpokenFirst(Boolean(voice) || spokenFirst)
-		setFeedback({
-			result: result.result,
-			model: practiceCurrent.exercise.targetItalian,
-			msUsed,
-			responseLatencyMs: voice?.responseLatencyMs,
-			utteranceDurationMs: voice?.utteranceDurationMs,
-			spoken: Boolean(voice),
-		})
-	}
-
-	async function handleSentenceRecording(recording: VoiceRecording) {
-		if (!practiceCurrent || feedback || speechLoading) return
-		setSpeechLoading(true)
-		setSpeechError(null)
+	async function submitSentenceCandidate(candidate: string, voice?: SpeakingDraft) {
+		if (!practiceCurrent || feedback || !candidate.trim() || assessmentLock.current) return
+		assessmentLock.current = true
+		setAssessmentLoading(true)
+		setAssessmentError(null)
+		const exerciseId = practiceCurrent.exercise.id
+		const msUsed = voice ? voice.recordingDurationMs : Date.now() - unitStartedAt
 		try {
-			const form = new FormData()
-			form.append('audio', recording.audio, 'olingo-sentence.webm')
-			form.append(
-				'context',
-				[
-					practiceCurrent.exercise.vocabDomain,
-					practiceCurrent.exercise.communicativeFunction,
-					practiceCurrent.exercise.phraseFamily,
-				]
-					.filter(Boolean)
-					.join(', ')
-			)
-			form.append(
-				'skillId',
-				practiceCurrent.skillId ?? practiceCurrent.exercise.id
-			)
-			form.append('responseLatencyMs', String(recording.responseLatencyMs))
-			form.append('utteranceDurationMs', String(recording.utteranceDurationMs))
-			const response = await apiFetch('/api/transcribe-speech', {
-				method: 'POST',
-				body: form,
+			const result = await submitExerciseAnswer({
+				userId,
+				item: practiceCurrent,
+				answer: candidate.trim(),
+				targetLevel,
+				sessionFocus,
+				sessionDomain,
+				hintsUsed: Math.max(hintsRevealed, voice?.hintsUsed ?? 0) + ((wordBankUsed || voice?.wordBankUsed) ? 1 : 0),
+				conceptHintsUsed: Math.max(hintsRevealed, voice?.hintsUsed ?? 0),
+				wordBankUsed: wordBankUsed || Boolean(voice?.wordBankUsed),
+				spokenFirst: Boolean(voice) || spokenFirst,
+				spoken: Boolean(voice),
+				// Recording onset is not prompt-to-answer latency and cannot earn fast recall credit.
+				utteranceDurationMs: voice?.utteranceDurationMs ?? undefined,
+				attemptId: voice?.attemptId,
+				speechEvidence: voice ? {
+					rawTranscript: voice.rawTranscript,
+					confirmedTranscript: candidate.trim(),
+					recordingDurationMs: voice.recordingDurationMs,
+					speechOnsetMs: voice.responseLatencyMs,
+					utteranceDurationMs: voice.utteranceDurationMs,
+					timingBasis: 'recording-start',
+				} : undefined,
+				mode: 'sentence',
+				msUsed,
 			})
-			const data = (await response.json().catch(() => null)) as {
-				transcript?: string
-				error?: string
-			} | null
-			if (!response.ok || !data?.transcript) {
-				throw new Error(
-					friendlyApiError(
-						response.status,
-						data?.error,
-						'Speech could not be checked. You can type the sentence instead.'
-					)
-				)
-			}
-			await submitSentenceCandidate(data.transcript, {
-				responseLatencyMs: recording.responseLatencyMs,
-				utteranceDurationMs: recording.utteranceDurationMs,
-			})
+			if (currentExerciseRef.current !== exerciseId) return
+			setAnswer(candidate.trim())
+			setSpokenFirst(Boolean(voice) || spokenFirst)
+			setFeedback({ result: result.result, model: practiceCurrent.exercise.targetItalian, msUsed,
+				responseLatencyMs: voice?.responseLatencyMs ?? undefined,
+				utteranceDurationMs: voice?.utteranceDurationMs ?? undefined, spoken: Boolean(voice) })
+			await speech.clearAfterAssessment().catch(() => setAssessmentError('Your answer was assessed, but its saved recording could not be cleared on this device.'))
 		} catch (error) {
-			setSpeechError(
-				error instanceof Error
-					? error.message
-					: 'Speech could not be checked. You can type the sentence instead.'
-			)
+			if (currentExerciseRef.current === exerciseId) setAssessmentError(error instanceof Error ? error.message : 'Assessment is unavailable. Your answer has not been marked; please retry.')
 		} finally {
-			setSpeechLoading(false)
+			assessmentLock.current = false
+			setAssessmentLoading(false)
 		}
 	}
 
@@ -842,6 +820,7 @@ export default function Study() {
 
 	async function nextSentence() {
 		if (!feedback || !practiceCurrent) return
+		await speech.discard()
 		if (!feedback.result.exerciseValid) {
 			await reportBadPrompt()
 			return
@@ -888,6 +867,7 @@ export default function Study() {
 	async function reportBadPrompt() {
 		if (!practiceCurrent) return
 		const exerciseId = practiceCurrent.exercise.id
+		await speech.discard()
 		await quarantineExercise(userId, practiceCurrent)
 		setSentenceQueue((items) =>
 			items.filter((item) => item.exercise.id !== exerciseId)
@@ -911,19 +891,17 @@ export default function Study() {
 
 	async function handleRepairSubmit(event: FormEvent) {
 		event.preventDefault()
-		if (!currentMistake || repairFeedback || !repairAnswer.trim()) return
+		if (!currentMistake || repairFeedback || !repairAnswer.trim() || repairLock.current) return
+		repairLock.current = true
+		setRepairLoading(true)
+		setRepairError(null)
 		const msUsed = Date.now() - unitStartedAt
-		const result = await submitMistakeRepair({
-			userId,
-			mistake: currentMistake,
-			answer: repairAnswer,
-			msUsed,
-		})
-		setRepairFeedback({
-			result: result.result,
-			model: currentMistake.correctedItalian,
-			msUsed,
-		})
+		try {
+			const result = await submitMistakeRepair({ userId, mistake: currentMistake, answer: repairAnswer, msUsed })
+			setRepairFeedback({ result: result.result, model: currentMistake.correctedItalian, msUsed })
+		} catch (error) {
+			setRepairError(error instanceof Error ? error.message : 'Assessment unavailable. Please retry; no progress has changed.')
+		} finally { repairLock.current = false; setRepairLoading(false) }
 	}
 
 	async function nextRepair() {
@@ -1156,6 +1134,9 @@ export default function Study() {
 
 	if (!sessionConfirmed) {
 		return (
+			<>
+			<SessionRecap />
+			<section className="course-recommendation"><p className="eyebrow">The conversation pathway</p><h2>Practise something you actually want to say.</h2><p>Everyday questions through nuanced discussion, across A1–C2. Three spoken turns at a time, with feedback on your own words.</p><Link className="btn btn-primary" to="/conversations">Explore conversations</Link></section>
 			<SessionLauncher
 				challengeMode={challengeMode}
 				dailyGoal={dailyGoal}
@@ -1168,6 +1149,7 @@ export default function Study() {
 				onStart={beginDailySession}
 				onTargetLevel={setTargetLevel}
 			/>
+			</>
 		)
 	}
 
@@ -1303,20 +1285,23 @@ export default function Study() {
 							feedback={feedback}
 							hintsRevealed={hintsRevealed}
 							isRepairAttempt={sentenceRepairAttempt}
-							promptStartedAt={unitStartedAt}
+							speech={speech}
+							assessmentLoading={assessmentLoading}
+							recorderActive={recorderActive}
+							onRecorderActive={setRecorderActive}
 							speechError={speechError}
 							speechLoading={speechLoading}
 							visibleHints={visibleHints}
 							wordBankVisible={wordBankVisible}
 							wordBankWords={wordBankWords}
 							onAddWord={addWord}
-							onAnswer={setAnswer}
+							onAnswer={speech.editTranscript}
 							onCompleteModel={completeModelIntroduction}
 							onHearModel={hearModel}
 							onNext={nextSentence}
 							onRevealHint={revealHint}
 							onRevealWordBank={revealWordBank}
-							onRecording={handleSentenceRecording}
+							onRecording={speech.recording}
 							onReportPrompt={reportBadPrompt}
 							onSubmit={handleSentenceSubmit}
 						/>
@@ -1358,6 +1343,8 @@ export default function Study() {
 
 					{activeSessionItem?.type === 'repair' && currentMistake && (
 						<DailyRepair
+							error={repairError}
+							busy={repairLoading}
 							answer={repairAnswer}
 							feedback={repairFeedback}
 							mistake={currentMistake}
@@ -1671,7 +1658,10 @@ function SentenceBuilder({
 	feedback,
 	hintsRevealed,
 	isRepairAttempt,
-	promptStartedAt,
+	speech,
+	assessmentLoading,
+	recorderActive,
+	onRecorderActive,
 	speechError,
 	speechLoading,
 	visibleHints,
@@ -1695,7 +1685,10 @@ function SentenceBuilder({
 	feedback: FeedbackState | null
 	hintsRevealed: number
 	isRepairAttempt: boolean
-	promptStartedAt: number
+	speech: ReturnType<typeof useSentenceSpeech>
+	assessmentLoading: boolean
+	recorderActive: boolean
+	onRecorderActive: (active: boolean) => void
 	speechError: string | null
 	speechLoading: boolean
 	visibleHints: string[]
@@ -1712,6 +1705,8 @@ function SentenceBuilder({
 	onRevealWordBank: () => void
 	onSubmit: (event: FormEvent) => void
 }) {
+	const busy = speechLoading || recorderActive || !speech.ready
+	const playbackRef = useRef<HTMLAudioElement | null>(null)
 	const cueMode = current.cueMode ?? 'english'
 	const complexityStep = current.complexityStep ?? 3
 	const anchor = current.exercise.targetItalian.split(/\s+/).slice(0, 2).join(' ')
@@ -1854,18 +1849,38 @@ function SentenceBuilder({
 					</div>
 					<SentenceVoiceRecorder
 						busy={speechLoading}
-						disabled={Boolean(feedback)}
-						promptStartedAt={promptStartedAt}
+						disabled={Boolean(feedback) || busy}
+						key={current.exercise.id}
+						onActiveChange={(active) => {
+							if (active) playbackRef.current?.pause()
+							onRecorderActive(active)
+						}}
 						onRecording={onRecording}
 					/>
 				</div>
-				{speechError && <p className="field-error speech-error">{speechError}</p>}
+				{speechError && <p className="field-error speech-error" role="alert">{speechError}</p>}
+				{speech.loading && <p role="status">Transcribing your recording… Nothing has been marked yet.</p>}
+				{assessmentLoading && <p role="status">Assessing your confirmed answer…</p>}
+				{speech.draft && <section className="speech-review" aria-label="Review your recording">
+					{speech.audioUrl && <audio ref={playbackRef} controls={!recorderActive} src={speech.audioUrl} aria-label="Your recorded answer" />}
+					<p>Recorded {(speech.draft.recordingDurationMs / 1000).toFixed(1)} s.
+						{speech.draft.responseLatencyMs !== null ? ` Estimated voice onset ${(speech.draft.responseLatencyMs / 1000).toFixed(1)} s after recording began.` : ' Voice onset could not be measured.'}
+					</p>
+					{!feedback && <>
+						<p>Your recording is kept on this device until assessed or discarded. Check the words below before confirming; natural alternative answers are welcome.</p>
+						<div className="speech-review-actions">
+							<button className="btn btn-secondary" type="button" disabled={busy} onClick={() => void speech.transcribe()}>Retry transcription</button>
+							<button className="btn btn-secondary" type="button" disabled={busy} onClick={() => void speech.discard()}>Discard recording / type instead</button>
+						</div>
+					</>}
+				</section>}
+				<label htmlFor="answer">{speech.draft ? 'What I heard — correct any misheard words' : 'Your answer — record above or type here'}</label>
 				<textarea
 					id="answer"
 					value={answer}
-					disabled={Boolean(feedback)}
+					disabled={Boolean(feedback) || busy}
 					onChange={(event) => onAnswer(event.target.value)}
-					placeholder="Type your Italian sentence..."
+					placeholder={speech.draft ? "Your transcript will appear here, or type exactly what you said…" : "Type your Italian sentence…"}
 					rows={4}
 				/>
 				{visibleHints.length > 0 && (
@@ -1885,6 +1900,7 @@ function SentenceBuilder({
 							<button
 								type="button"
 								key={`${word}-${wordIndex}`}
+								disabled={Boolean(feedback) || busy}
 								onClick={() => onAddWord(word)}>
 								{word}
 							</button>
@@ -1909,7 +1925,11 @@ function SentenceBuilder({
 						<span className="feedback-note">{feedback.result.shortFeedback}</span>
 						{feedback.result.exerciseValid ? (
 							<div className="feedback-model">
-								<p>{feedback.model}</p>
+								<span>{feedback.result.accepted ? 'Your answer works' : 'Suggested correction'}</span>
+								<p>{feedback.result.accepted ? answer : feedback.result.correctedItalian || feedback.model}</p>
+								{feedback.result.accepted && answer.trim() !== feedback.model.trim() && <details>
+									<summary>Another valid way to say it</summary><p>{feedback.model}</p>
+								</details>}
 								<span>
 									<b>Meaning:</b> {current.exercise.promptEnglish}
 								</span>
@@ -1921,7 +1941,7 @@ function SentenceBuilder({
 						)}
 						{feedback.spoken && (
 							<span className="voice-result">
-								Spoken answer started in {formatDuration(feedback.responseLatencyMs ?? 0)}
+								{feedback.responseLatencyMs === undefined ? 'Voice onset not measured' : `Estimated voice onset ${(feedback.responseLatencyMs / 1000).toFixed(1)} s after recording began`}
 							</span>
 						)}
 						<div className="feedback-actions">
@@ -1950,7 +1970,8 @@ function SentenceBuilder({
 						<button
 							className="btn btn-secondary"
 							type="button"
-							onClick={onReportPrompt}>
+							disabled={busy}
+						onClick={onReportPrompt}>
 							<Flag size={18} />
 							Unclear prompt
 						</button>
@@ -1959,7 +1980,7 @@ function SentenceBuilder({
 						className="btn btn-secondary"
 						type="button"
 						disabled={
-							Boolean(feedback) ||
+							Boolean(feedback) || busy ||
 							hintsRevealed >= current.exercise.hints.length
 						}
 						onClick={onRevealHint}>
@@ -1969,7 +1990,7 @@ function SentenceBuilder({
 					<button
 						className="btn btn-secondary"
 						type="button"
-						disabled={Boolean(feedback) || wordBankVisible}
+						disabled={Boolean(feedback) || busy || wordBankVisible}
 						onClick={onRevealWordBank}>
 						<Layers size={18} />
 						Words
@@ -1984,9 +2005,9 @@ function SentenceBuilder({
 								: 'Next'}
 						</button>
 					) : (
-						<button className="btn btn-primary" type="submit">
+						<button className="btn btn-primary" type="submit" disabled={busy || !answer.trim()}>
 							<Play size={18} />
-							Check
+							{assessmentLoading ? 'Assessing…' : speech.draft ? 'Confirm transcript and assess' : 'Check answer'}
 						</button>
 					)}
 				</div>
@@ -2145,6 +2166,8 @@ function GuidedRecallCards({
 
 function DailyRepair({
 	answer,
+	error,
+	busy,
 	feedback,
 	mistake,
 	onAnswer,
@@ -2152,6 +2175,8 @@ function DailyRepair({
 	onSubmit,
 }: {
 	answer: string
+	error: string | null
+	busy: boolean
 	feedback: FeedbackState | null
 	mistake: MistakeItem
 	onAnswer: (value: string) => void
@@ -2181,11 +2206,12 @@ function DailyRepair({
 			</div>
 			<textarea
 				value={answer}
-				disabled={Boolean(feedback)}
+				disabled={Boolean(feedback) || busy}
 				onChange={(event) => onAnswer(event.target.value)}
 				placeholder="Type the repaired Italian sentence..."
 				rows={3}
 			/>
+			{error && <p className="field-error" role="alert">{error}</p>}
 			{feedback && (
 				<div
 					className={
@@ -2214,9 +2240,9 @@ function DailyRepair({
 						Next
 					</button>
 				) : (
-					<button className="btn btn-primary" type="submit">
+					<button className="btn btn-primary" type="submit" disabled={busy || !answer.trim()}>
 						<Play size={18} />
-						Check repair
+						{busy ? 'Assessing…' : 'Check repair'}
 					</button>
 				)}
 			</div>

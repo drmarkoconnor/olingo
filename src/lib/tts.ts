@@ -9,7 +9,7 @@ export function canTTS() {
 	)
 }
 
-function stopCurrentAudio() {
+export function stopCurrentAudio() {
 	currentAudio?.pause()
 	if (currentAudio?.src.startsWith('blob:')) URL.revokeObjectURL(currentAudio.src)
 	currentAudio = null
