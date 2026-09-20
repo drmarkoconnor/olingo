@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import handler from './evaluate-answer'
+import handler from '../../netlify/functions/evaluate-answer'
 
 const mocks = vi.hoisted(() => ({ setJSON: vi.fn(async () => undefined) }))
 vi.mock('@netlify/blobs', () => ({ getStore: () => ({ setJSON: mocks.setJSON }) }))
-vi.mock('./_shared/auth', () => ({
+vi.mock('../../netlify/functions/_shared/auth', () => ({
 	requireUser: async () => ({ user: { id: 'learner' } }),
 	authFailed: () => false,
 }))

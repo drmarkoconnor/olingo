@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import handler from './transcribe-speech'
+import handler from '../../netlify/functions/transcribe-speech'
 const mocks = vi.hoisted(() => ({ setJSON: vi.fn(async () => undefined) }))
 vi.mock('@netlify/blobs', () => ({ getStore: () => ({ setJSON: mocks.setJSON }) }))
-vi.mock('./_shared/auth', () => ({ requireUser: async () => ({ user: { id: 'learner' } }), authFailed: () => false }))
+vi.mock('../../netlify/functions/_shared/auth', () => ({ requireUser: async () => ({ user: { id: 'learner' } }), authFailed: () => false }))
 function request(size = 20, fields: Record<string, string> = {}) {
 	const body = new FormData()
 	body.append('audio', new Blob([new Uint8Array(size)], { type: 'audio/webm' }), 'answer.webm')
